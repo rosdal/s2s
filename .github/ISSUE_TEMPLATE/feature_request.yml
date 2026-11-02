@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest something s2s should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What you'd like s2s to do. Note which pipeline stage it belongs to if you know (capture, maps, detect, unbundle, scaffold, verify).
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Intended use
+      options:
+        - label: This fits the [intended use](https://github.com/Rosdal/s2s#intended-use) (no bypassing logins, paywalls or bot protection)
+          required: true

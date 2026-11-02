@@ -1,0 +1,37 @@
+{
+  "name": "@rosdal/s2s",
+  "version": "0.0.0",
+  "description": "Turn a live URL into a buildable reconstruction of its frontend source.",
+  "license": "MIT",
+  "author": "Rosdal",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rosdal/s2s.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/Rosdal/s2s#readme",
+  "bugs": "https://github.com/Rosdal/s2s/issues",
+  "keywords": [
+    "reverse-engineering",
+    "source-maps",
+    "cli"
+  ],
+  "type": "module",
+  "bin": {
+    "s2s": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "@rosdal/s2s-fingerprints",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module"
+}

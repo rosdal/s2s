@@ -1,0 +1,44 @@
+name: Bug report
+description: Something in s2s doesn't work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security problems go through [private vulnerability reporting](https://github.com/Rosdal/s2s/security/advisories/new), not here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The exact command and, if you can share it, the URL. Don't attach captured site content.
+      placeholder: |
+        1. npx @rosdal/s2s capture https://example.com
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output or logs
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: s2s version
+      placeholder: output of `s2s --version`
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: OS, Node version, package manager
+    validations:
+      required: true

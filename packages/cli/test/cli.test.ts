@@ -124,3 +124,46 @@ describe("s2s capture", () => {
     }
   });
 });
+
+describe("s2s maps", () => {
+  test("prints a one-line summary, then skips a complete stage", async () => {
+    const out = path.join(tmp, "maps");
+    expect(await runCli(["capture", server.url, "--out", out, ...FAST], "0.0.0", io().cliIO)).toBe(
+      0,
+    );
+    const first = io();
+    expect(await runCli(["maps", out], "0.0.0", first.cliIO)).toBe(0);
+    expect(first.err.join("\n")).toMatch(
+      /Maps complete: 0 maps, 0 sources recovered, 0% of first-party JS covered/,
+    );
+    const manifest = JSON.parse(await readFile(path.join(out, "manifest.json"), "utf8"));
+    expect(manifest.stages.maps.status).toBe("complete");
+
+    const again = io();
+    expect(await runCli(["maps", out, "--json"], "0.0.0", again.cliIO)).toBe(0);
+    expect(JSON.parse(again.out.join("\n"))).toMatchObject({ skipped: true, status: "complete" });
+
+    const forced = io();
+    expect(await runCli(["maps", out, "--force", "--json"], "0.0.0", forced.cliIO)).toBe(0);
+    expect(JSON.parse(forced.out.join("\n"))).toMatchObject({ skipped: false });
+  });
+
+  test("a folder without a workspace exits 1 with a hint", async () => {
+    const { cliIO, err } = io();
+    expect(await runCli(["maps", path.join(tmp, "missing")], "0.0.0", cliIO)).toBe(1);
+    expect(err.join("\n")).toContain('Run "s2s capture <url>" first');
+  });
+
+  test("--help after a name that is not a command shows the main usage", async () => {
+    const { cliIO, out } = io();
+    expect(await runCli(["constructor", "--help"], "0.0.0", cliIO)).toBe(0);
+    expect(out.join("\n")).toContain("capture");
+    expect(out.join("\n")).not.toContain("undefined");
+  });
+
+  test("--help shows the maps usage", async () => {
+    const { cliIO, out } = io();
+    expect(await runCli(["maps", "--help"], "0.0.0", cliIO)).toBe(0);
+    expect(out.join("\n")).toContain("--force");
+  });
+});

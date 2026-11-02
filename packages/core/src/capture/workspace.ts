@@ -50,11 +50,25 @@ export interface WorkspacePaths {
   cdnPackages: string;
   discovery: string;
   har: string;
+  recovered: string;
+  /** Exact sources from source maps, plus `_virtual/` and `_vendor/`. */
+  recoveredSourcemap: string;
+  /** Minified chunks renamed from partial maps, as `<body-hash>.js`. */
+  renamed: string;
+  analysis: string;
+  sourcemapsReport: string;
+  sourcemapBoundaries: string;
+  projectHints: string;
+  evidence: string;
+  sourcemapPackages: string;
 }
 
 export function workspacePaths(root: string): WorkspacePaths {
   const abs = path.resolve(root);
   const raw = path.join(abs, "raw");
+  const recovered = path.join(abs, "recovered");
+  const analysis = path.join(abs, "analysis");
+  const evidence = path.join(analysis, "evidence");
   return {
     root: abs,
     manifest: path.join(abs, "manifest.json"),
@@ -68,5 +82,14 @@ export function workspacePaths(root: string): WorkspacePaths {
     cdnPackages: path.join(raw, "cdn-packages.json"),
     discovery: path.join(raw, "discovery.json"),
     har: path.join(raw, "capture.har"),
+    recovered,
+    recoveredSourcemap: path.join(recovered, "sourcemap"),
+    renamed: path.join(recovered, "renamed"),
+    analysis,
+    sourcemapsReport: path.join(analysis, "sourcemaps.json"),
+    sourcemapBoundaries: path.join(analysis, "sourcemap-boundaries.json"),
+    projectHints: path.join(analysis, "project-hints.json"),
+    evidence,
+    sourcemapPackages: path.join(evidence, "sourcemap-packages.json"),
   };
 }

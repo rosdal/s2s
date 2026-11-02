@@ -14,6 +14,12 @@ export type FixtureName =
   | "nextjs-pages"
   | "cdn-libs"
   | "sourcemaps"
+  | "sourcemaps-partial"
+  | "sourcemaps-inline"
+  | "webpack-namespace"
+  | "pnpm-vendor"
+  | "css-preprocessor"
+  | "hostile-map"
   | "hostile";
 
 /** Folder each fixture is served from; fixtures with a build step serve their build output. */
@@ -24,6 +30,12 @@ export const FIXTURE_ROOTS: Record<FixtureName, string> = {
   "nextjs-pages": "nextjs-pages/out",
   "cdn-libs": "cdn-libs",
   sourcemaps: "sourcemaps/dist",
+  "sourcemaps-partial": "sourcemaps-partial/dist",
+  "sourcemaps-inline": "sourcemaps-inline/dist",
+  "webpack-namespace": "webpack-namespace/dist",
+  "pnpm-vendor": "pnpm-vendor/dist",
+  "css-preprocessor": "css-preprocessor/dist",
+  "hostile-map": "hostile-map",
   hostile: "hostile",
 };
 
@@ -32,6 +44,11 @@ export const BUILT_FIXTURES = [
   "webpack-react",
   "nextjs-pages",
   "sourcemaps",
+  "sourcemaps-partial",
+  "sourcemaps-inline",
+  "webpack-namespace",
+  "pnpm-vendor",
+  "css-preprocessor",
 ] as const;
 
 const TYPES: Record<string, string> = {

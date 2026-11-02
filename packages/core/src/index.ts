@@ -21,3 +21,11 @@ export { classifyOrigin, isFirstParty } from "./capture/origin.js";
 export { RequestRecord, readRequestLog } from "./capture/request-log.js";
 export { cleanUrl, pageKey } from "./capture/url.js";
 export { pageSlug, workspacePaths, workspaceSlug } from "./capture/workspace.js";
+export {
+  type MapsOptions,
+  type MapsProgress,
+  type MapsResult,
+  maps,
+  summaryLine,
+  WorkspaceError,
+} from "./maps/run.js";

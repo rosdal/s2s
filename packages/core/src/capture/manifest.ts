@@ -18,6 +18,8 @@ export const StageState = z.object({
 });
 export type StageState = z.infer<typeof StageState>;
 
+const pendingStage = (): StageState => ({ status: "pending", stats: {}, warnings: [] });
+
 export const Manifest = z.object({
   schemaVersion: z.literal(MANIFEST_SCHEMA_VERSION),
   s2sVersion: z.string(),
@@ -28,6 +30,8 @@ export const Manifest = z.object({
   options: z.record(z.string(), z.unknown()),
   stages: z.object({
     capture: StageState,
+    /** Stage 2. Workspaces written before it existed read as `pending`. */
+    maps: StageState.default(pendingStage),
   }),
 });
 export type Manifest = z.infer<typeof Manifest>;
@@ -45,7 +49,7 @@ export function newManifest(input: {
     createdAt: now,
     updatedAt: now,
     options: input.options,
-    stages: { capture: { status: "pending", stats: {}, warnings: [] } },
+    stages: { capture: pendingStage(), maps: pendingStage() },
   };
 }
 

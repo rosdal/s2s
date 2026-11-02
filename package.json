@@ -19,7 +19,7 @@
     "@biomejs/biome": "2.6.4",
     "@changesets/cli": "^3.0.3",
     "@rosdal/s2s": "workspace:*",
-    "@types/node": "^22",
+    "@types/node": "^26",
     "tsup": "^9.0.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"

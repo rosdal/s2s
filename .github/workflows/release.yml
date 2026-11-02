@@ -31,10 +31,10 @@ jobs:
       - name: Open release PR or publish
         uses: changesets/action@v2
         with:
-          version: pnpm changeset version
-          publish: ${{ vars.NPM_PUBLISH == 'true' && 'pnpm release' || '' }}
-          title: "chore: release"
-          commit: "chore: release"
+          version-script: pnpm changeset version
+          publish-script: ${{ vars.NPM_PUBLISH == 'true' && 'pnpm release' || '' }}
+          pr-title: "chore: release"
+          commit-message: "chore: release"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -1,0 +1,7 @@
+body {
+  font-family: system-ui, sans-serif;
+  margin: 2rem;
+}
+#status.hydrated {
+  color: green;
+}

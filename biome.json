@@ -6,7 +6,8 @@
     "useIgnoreFile": true
   },
   "files": {
-    "ignoreUnknown": true
+    "ignoreUnknown": true,
+    "includes": ["**", "!packages/core/test/samples", "!.changeset/*.md"]
   },
   "formatter": {
     "enabled": true,

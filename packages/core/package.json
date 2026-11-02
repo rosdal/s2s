@@ -13,5 +13,12 @@
   "scripts": {
     "build": "tsup && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "p-limit": "^7.3.3",
+    "playwright-core": "^1.64.1",
+    "robots-parser": "^3.0.1",
+    "tldts": "^7.4.19",
+    "zod": "^4.6.7"
   }
 }

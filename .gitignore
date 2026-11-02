@@ -8,3 +8,8 @@ coverage/
 
 # Captured sites must never be committed
 workspaces/
+
+# Fixture build output
+.next/
+out/
+next-env.d.ts

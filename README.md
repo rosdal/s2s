@@ -15,7 +15,7 @@ npx @rosdal/s2s grab https://example.com
 cd example-com && claude
 ```
 
-Each stage will also be its own command (`s2s capture`, `s2s maps`, `s2s detect`, `s2s unbundle`, `s2s scaffold`, `s2s verify`), and every stage resumes from the workspace's `manifest.json`. See the [product design](docs/design.md) for the full plan.
+Each stage will also be its own command (`s2s capture`, `s2s maps`, `s2s detect`, `s2s unbundle`, `s2s scaffold`, `s2s verify`), and every stage resumes from the workspace's `manifest.json`.
 
 ## Intended use
 

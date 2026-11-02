@@ -4,7 +4,7 @@ Instructions for coding agents (Claude Code, Codex, Cursor) working on this repo
 
 ## What this is
 
-s2s (Site-to-Source) is a TypeScript CLI that turns a live URL into a buildable reconstruction of its frontend source. The product plan is in `docs/design.md`, and numbered todos live in `docs/todo/`. Read the design before adding a feature, and stay inside the current todo's scope.
+s2s (Site-to-Source) is a TypeScript CLI that turns a live URL into a buildable reconstruction of its frontend source. The product plan is in `docs/design.md`, and numbered todos live in `docs/todo/`; both are local only and gitignored. Read the design before adding a feature, and stay inside the current todo's scope.
 
 ## Stack
 

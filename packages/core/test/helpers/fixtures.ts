@@ -95,7 +95,15 @@ export async function serveFixture(name: FixtureName): Promise<FixtureServer> {
     }
     void serveFile(root, req, res);
   });
-  if (name === "hostile") server.on("upgrade", acceptWebSocket);
+  // Upgraded sockets leave the server's bookkeeping, so close() would wait on them forever.
+  const sockets = new Set<import("node:stream").Duplex>();
+  if (name === "hostile") {
+    server.on("upgrade", (req, socket) => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+      acceptWebSocket(req, socket);
+    });
+  }
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
   return {
@@ -103,22 +111,43 @@ export async function serveFixture(name: FixtureName): Promise<FixtureServer> {
     root,
     close: () =>
       new Promise((resolve) => {
+        for (const socket of sockets) socket.destroy();
         server.closeAllConnections();
         server.close(() => resolve());
       }),
   };
 }
 
-/** Every `.js`, `.mjs` and `.css` file in a fixture's served folder, as URL paths. */
+/**
+ * Every `.js`, `.mjs` and `.css` file in a fixture's served folder that some other served file
+ * names, as URL paths. A file nothing references (Turbopack's `/_app` page-loader chunk, for one)
+ * can't be loaded by the site, so no capture could find it.
+ */
 export async function fixtureChunks(name: FixtureName): Promise<string[]> {
   const root = path.join(FIXTURES_DIR, FIXTURE_ROOTS[name]);
-  const entries = await readdir(root, { recursive: true, withFileTypes: true });
-  return entries
-    .filter((entry) => entry.isFile() && /\.(m?js|css)$/.test(entry.name))
-    .map(
-      (entry) =>
-        `/${path.relative(root, path.join(entry.parentPath, entry.name)).replaceAll("\\", "/")}`,
-    )
-    .filter((p) => !p.includes("/node_modules/") && !p.endsWith(".config.js"))
+  const entries = (await readdir(root, { recursive: true, withFileTypes: true })).filter(
+    (entry) =>
+      entry.isFile() &&
+      !path.join(entry.parentPath, entry.name).includes(`${path.sep}node_modules${path.sep}`),
+  );
+  const files = entries.map((entry) => path.join(entry.parentPath, entry.name));
+  const texts = await Promise.all(
+    files
+      .filter((file) => /\.(m?js|css|html)$/.test(file))
+      .map(async (file) => ({ file, text: await readFile(file, "utf8") })),
+  );
+  return files
+    .filter((file) => /\.(m?js|css)$/.test(file) && !file.endsWith(".config.js"))
+    .filter((file) => {
+      // webpack builds chunk names at runtime ("settings" + "." + "24504f64" + ".chunk.js"), so
+      // the content hash alone counts as a reference.
+      const base = path.basename(file);
+      const tokens = [
+        base,
+        ...base.split(/[.]/).filter((part) => part.length >= 6 && /\d/.test(part)),
+      ];
+      return texts.some((t) => t.file !== file && tokens.some((token) => t.text.includes(token)));
+    })
+    .map((file) => `/${path.relative(root, file).replaceAll("\\", "/")}`)
     .sort();
 }

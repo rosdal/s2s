@@ -53,7 +53,7 @@ describe("manifest", () => {
       targetUrl: "https://example.com/",
       options: { depth: 0 },
     });
-    manifest.stages.capture = { status: "complete", stats: { requests: 3 } };
+    manifest.stages.capture = { status: "complete", stats: { requests: 3 }, warnings: [] };
     await writeManifest(file, manifest);
     const read = await readManifest(file);
     expect(read?.stages.capture.status).toBe("complete");

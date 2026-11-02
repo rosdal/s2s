@@ -13,6 +13,8 @@ export const StageState = z.object({
   finishedAt: z.iso.datetime().optional(),
   stats: z.record(z.string(), z.number()).default({}),
   error: z.string().optional(),
+  /** Things that went wrong without stopping the stage, for the user to read. */
+  warnings: z.array(z.string()).default([]),
 });
 export type StageState = z.infer<typeof StageState>;
 
@@ -43,7 +45,7 @@ export function newManifest(input: {
     createdAt: now,
     updatedAt: now,
     options: input.options,
-    stages: { capture: { status: "pending", stats: {} } },
+    stages: { capture: { status: "pending", stats: {}, warnings: [] } },
   };
 }
 

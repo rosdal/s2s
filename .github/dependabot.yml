@@ -11,6 +11,10 @@ updates:
       production:
         dependency-type: production
         patterns: ["*"]
+    ignore:
+      # Types track the lowest supported Node (engines: >=22)
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: chore
       include: scope

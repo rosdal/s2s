@@ -25,22 +25,14 @@ jobs:
           node-version: 24
           cache: pnpm
           registry-url: https://registry.npmjs.org
-      - name: Check for npm token
-        id: token
-        shell: bash
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -n "$NPM_TOKEN" ]; then echo "present=true" >> "$GITHUB_OUTPUT"
-          else echo "::notice::NPM_TOKEN secret not set; skipping release."; fi
       - run: pnpm install --frozen-lockfile
-        if: steps.token.outputs.present == 'true'
+      # Version PRs always open. Publishing stays off until the repo variable
+      # NPM_PUBLISH is "true" (works with an NPM_TOKEN secret or npm trusted publishing).
       - name: Open release PR or publish
-        if: steps.token.outputs.present == 'true'
         uses: changesets/action@v2
         with:
           version: pnpm changeset version
-          publish: pnpm release
+          publish: ${{ vars.NPM_PUBLISH == 'true' && 'pnpm release' || '' }}
           title: "chore: release"
           commit: "chore: release"
         env:

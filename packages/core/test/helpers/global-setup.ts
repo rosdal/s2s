@@ -10,6 +10,7 @@ export default function setup(): void {
     console.log(`Building fixture ${name}…`);
     execFileSync("pnpm", ["--filter", `@s2s-fixtures/${name}`, "run", "build"], {
       stdio: "inherit",
+      env: { ...process.env, NEXT_TELEMETRY_DISABLED: "1" },
       shell: process.platform === "win32",
     });
   }

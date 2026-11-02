@@ -1,0 +1,59 @@
+import { type CommandDef, defineCommand, renderUsage, runCommand } from "citty";
+import { type CliIO, captureCommand } from "./commands/capture.js";
+
+export type { CliIO };
+
+export const defaultIO: CliIO = {
+  stdout: (line) => console.log(line),
+  stderr: (line) => console.error(line),
+  onInterrupt: (handler) => {
+    process.on("SIGINT", handler);
+    return () => process.off("SIGINT", handler);
+  },
+};
+
+/** Run the CLI with the given arguments and return the process exit code. */
+export async function runCli(
+  argv: string[],
+  version: string,
+  io: CliIO = defaultIO,
+): Promise<number> {
+  let exitCode = 0;
+  const capture = captureCommand(io, version, (code) => {
+    exitCode = code;
+  });
+  const main = defineCommand({
+    meta: {
+      name: "s2s",
+      version,
+      description: "Turn a live URL into a buildable reconstruction of its frontend source.",
+    },
+    subCommands: { capture },
+  });
+
+  if (argv.length === 1 && (argv[0] === "--version" || argv[0] === "-v")) {
+    io.stdout(version);
+    return 0;
+  }
+  const help = argv.includes("--help") || argv.includes("-h");
+  if (help || argv.length === 0) {
+    const usage =
+      argv[0] === "capture"
+        ? await renderUsage(capture as unknown as CommandDef, main)
+        : await renderUsage(main);
+    io.stdout(usage);
+    return argv.length === 0 ? 1 : 0;
+  }
+  try {
+    await runCommand(main, { rawArgs: argv });
+    return exitCode;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if ((error as { code?: string }).code?.startsWith("E_")) {
+      io.stderr(`${message}\nRun "s2s --help" for usage.`);
+    } else {
+      io.stderr(`s2s: ${error instanceof Error ? (error.stack ?? message) : message}`);
+    }
+    return 1;
+  }
+}

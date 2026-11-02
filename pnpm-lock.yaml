@@ -268,6 +268,25 @@ importers:
       citty:
         specifier: ^0.2.2
         version: 0.2.2
+      p-limit:
+        specifier: ^7.3.3
+        version: 7.3.3
+      playwright-core:
+        specifier: ^1.64.1
+        version: 1.64.1
+      robots-parser:
+        specifier: ^3.0.1
+        version: 3.0.1
+      tldts:
+        specifier: ^7.4.19
+        version: 7.4.19
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@rosdal/s2s-core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/core:
     dependencies:

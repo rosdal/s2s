@@ -13,3 +13,7 @@ workspaces/
 .next/
 out/
 next-env.d.ts
+
+# Product plan and todos stay local
+docs/design.md
+docs/todo/

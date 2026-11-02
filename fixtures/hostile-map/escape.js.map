@@ -1,0 +1,1 @@
+{"version": 3, "sources": ["../../etc/passwd", "src/../../../evil.js", "src/ok.js"], "sourcesContent": ["root:x:0:0\n", "evil\n", "export const ok = true;\n"], "names": [], "mappings": "AAAA,CCAA,CCAA"}

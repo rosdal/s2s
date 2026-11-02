@@ -36,6 +36,9 @@ export interface MapEntry {
  */
 export const BLIND_PROBE_GIVE_UP = 25;
 
+/** A `sourceMappingURL` comment in JS (`//#`) or CSS (`/*#`); group 1 is the URL. */
+export const SOURCE_MAPPING_URL = /[#@]\s*sourceMappingURL\s*=\s*([^\s'"*]+)/g;
+
 export interface DiscoveryLimits {
   maxRounds: number;
   maxFiles: number;
@@ -331,7 +334,7 @@ export class Discovery {
     if (!isFirstParty(fileUrl, this.#target)) return;
     const text = (await readBody(asset.hash)).toString("utf8");
     const header = asset.headers.sourcemap ?? asset.headers["x-sourcemap"];
-    const comment = [...text.matchAll(/[#@]\s*sourceMappingURL\s*=\s*([^\s'"*]+)/g)].at(-1)?.[1];
+    const comment = [...text.matchAll(SOURCE_MAPPING_URL)].at(-1)?.[1];
 
     if (!header && comment?.startsWith("data:")) {
       const inline = decodeDataUrl(comment);
@@ -402,7 +405,8 @@ function looksLikeMap(body: Buffer): boolean {
   );
 }
 
-function decodeDataUrl(url: string): Buffer | undefined {
+/** Decode a `data:` URL (base64 or percent-encoded) to bytes; `undefined` when malformed. */
+export function decodeDataUrl(url: string): Buffer | undefined {
   const match = /^data:[^,]*?(;base64)?,(.*)$/s.exec(url);
   if (!match) return undefined;
   try {

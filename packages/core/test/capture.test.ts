@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { BrowserContext } from "playwright-core";
@@ -144,6 +144,37 @@ describe("static fixture", () => {
     expect(resumed.result.skipped).toBe(false);
     expect(resumed.result.status).toBe("complete");
     await expectAllChunks("static", resumed.records);
+  });
+
+  test("an explicit page list and a storage-state file are used", async () => {
+    const authState = path.join(tmp, "state.json");
+    await writeFile(
+      authState,
+      JSON.stringify({
+        cookies: [
+          {
+            name: "session",
+            value: "abc",
+            domain: "127.0.0.1",
+            path: "/",
+            expires: -1,
+            httpOnly: false,
+            secure: false,
+            sameSite: "Lax",
+          },
+        ],
+        origins: [],
+      }),
+    );
+    const { result, paths, records } = await run(server, "pages-auth", {
+      pages: [new URL("about.html", server.url).href],
+      authState,
+    });
+    expect(result.status).toBe("complete");
+    expect((await readdir(paths.pages)).sort()).toEqual(["about-html", "index"]);
+    const about = records.find((r) => pathOf(r.url) === "/about.html");
+    expect(about?.phase).toBe("crawl");
+    expect(about?.requestHeaders.cookie).toBe("session=abc");
   });
 
   test("--har writes a HAR next to the request log", async () => {

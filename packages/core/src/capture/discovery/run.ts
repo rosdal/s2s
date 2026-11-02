@@ -29,6 +29,13 @@ export interface MapEntry {
   size: number;
 }
 
+/**
+ * After this many blind `<file>.map` probes on one origin miss without a single hit, stop
+ * probing that origin blindly. Maps named by a comment or header are still fetched. Sites that
+ * ship unreferenced maps almost always ship them for every file, so the first probes find them.
+ */
+export const BLIND_PROBE_GIVE_UP = 25;
+
 export interface DiscoveryLimits {
   maxRounds: number;
   maxFiles: number;
@@ -58,7 +65,10 @@ export class Discovery {
   readonly #scanned = new Set<string>();
   readonly #probed = new Set<string>();
   readonly #entries = new Map<string, DiscoveryEntry>();
+  readonly #blindProbes = new Map<string, { hits: number; misses: number }>();
   readonly maps: MapEntry[] = [];
+  /** Blind `.map` probes not sent because the origin had already missed too often. */
+  blindProbesSkipped = 0;
   rounds = 0;
   fetchedCount = 0;
   capped = false;
@@ -321,20 +331,28 @@ export class Discovery {
             via = "probe";
           }
           if (!isFirstParty(new URL(mapUrl), this.#target)) return;
+          const blind = this.#blindProbes.get(fileUrl.origin) ?? { hits: 0, misses: 0 };
+          this.#blindProbes.set(fileUrl.origin, blind);
+          if (via === "probe" && blind.hits === 0 && blind.misses >= BLIND_PROBE_GIVE_UP) {
+            this.blindProbesSkipped++;
+            return;
+          }
           const result = await this.#fetch(
             mapUrl,
             "discover",
             { type: "map-probe", url: asset.url },
             signal,
           );
-          if (
-            result.body &&
+          const hit =
+            result.body !== null &&
             result.status >= 200 &&
             result.status < 300 &&
-            looksLikeMap(result.body)
-          ) {
-            await this.#saveMap(asset.url, mapUrl, via, result.body);
+            looksLikeMap(result.body);
+          if (via === "probe") {
+            if (hit) blind.hits++;
+            else blind.misses++;
           }
+          if (hit && result.body) await this.#saveMap(asset.url, mapUrl, via, result.body);
         }),
       ),
     );

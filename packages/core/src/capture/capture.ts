@@ -5,7 +5,7 @@ import { writeJsonAtomic } from "../fs-util.js";
 import { BodyStore } from "./body-store.js";
 import { launchBrowser } from "./browser.js";
 import { collectCdnPackages } from "./cdn.js";
-import { Discovery } from "./discovery/run.js";
+import { BLIND_PROBE_GIVE_UP, Discovery } from "./discovery/run.js";
 import { buildHar } from "./har.js";
 import { type Manifest, newManifest, readManifest, writeManifest } from "./manifest.js";
 import { RUNTIME_PROBE } from "./probe.js";
@@ -259,6 +259,7 @@ export async function capture(options: CaptureOptions): Promise<CaptureResult> {
     chunksDiscovered: discovery.fetchedCount,
     discoveryRounds: discovery.rounds,
     mapsFound: discovery.maps.length,
+    blindProbesSkipped: discovery.blindProbesSkipped,
     durationMs: Date.now() - startedAt.getTime(),
   });
 
@@ -364,6 +365,11 @@ export async function capture(options: CaptureOptions): Promise<CaptureResult> {
     }
     if (discovery.capped)
       warn("Chunk discovery hit its round or file cap; some chunks may be missing.");
+    if (discovery.blindProbesSkipped > 0) {
+      warn(
+        `Stopped blind .map probing after ${BLIND_PROBE_GIVE_UP} misses in a row; skipped ${discovery.blindProbesSkipped} probes.`,
+      );
+    }
     status = "complete";
   } catch (error) {
     if (signal?.aborted) {

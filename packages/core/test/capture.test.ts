@@ -2,11 +2,12 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { BrowserContext } from "playwright-core";
+import { type BrowserContext, request } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { type CaptureOptions, capture, RobotsDisallowedError } from "../src/capture/capture.js";
 import { readManifest } from "../src/capture/manifest.js";
 import { type RequestRecord, readRequestLog } from "../src/capture/request-log.js";
+import { RobotsCache } from "../src/capture/robots.js";
 import { workspacePaths } from "../src/capture/workspace.js";
 import {
   type FixtureName,
@@ -94,7 +95,7 @@ describe("static fixture", () => {
       path.join(paths.pages, "index", "page.json"),
     );
     expect(pageJson.title).toBe("Static fixture");
-    expect(pageJson.tags.map((t) => t.tag)).toEqual(["link", "script"]);
+    expect(pageJson.tags.map((t) => t.tag)).toEqual(["link", "link", "script"]);
 
     for (const viewport of ["desktop", "mobile"]) {
       expect(existsSync(path.join(paths.screenshots, "index", `${viewport}.png`))).toBe(true);
@@ -104,6 +105,15 @@ describe("static fixture", () => {
     expect(byPath("/css/site.css")?.origin).toBe("first-party");
     expect(byPath("/")?.phase).toBe("load");
     expect(new Set(records.map((r) => r.viewport))).toEqual(new Set(["desktop", "mobile", null]));
+
+    // Iframes and dedicated workers are recorded through the same context listeners.
+    expect(byPath("/css/frame.css")?.bodyHash).toBeTruthy();
+    expect(byPath("/js/worker.js")?.bodyHash).toBeTruthy();
+    expect(byPath("/js/worker-dep.js")?.bodyHash).toBeTruthy();
+    // Redirects are logged without a body; the target is recorded separately.
+    const redirect = byPath("/old.css");
+    expect(redirect).toMatchObject({ status: 302, bodyHash: null });
+    expect(redirect?.redirectedTo).toMatch(/\/css\/site\.css$/);
 
     const runtime = await readJson<{ viewport: string }[]>(paths.runtime);
     expect(runtime.map((r) => r.viewport)).toEqual(["desktop", "mobile"]);
@@ -381,6 +391,28 @@ describe("hostile fixture", () => {
       paths.runtime,
     );
     expect(runtime[0]?.interactions.abortedNavigations).toBeGreaterThanOrEqual(1);
+  });
+
+  test("caps interactions per page", async () => {
+    const { paths } = await run(server, "hostile-cap", {
+      phaseTimeoutMs: 1_000,
+      maxInteractions: 1,
+    });
+    const runtime = await readJson<{ interactions: Record<string, number> }[]>(paths.runtime);
+    const { hovers = 0, clicks = 0, focuses = 0 } = runtime[0]?.interactions ?? {};
+    expect(hovers + clicks + focuses).toBe(1);
+  });
+
+  test("reads Crawl-delay and Disallow rules from robots.txt", async () => {
+    const api = await request.newContext();
+    try {
+      const robots = new RobotsCache(api);
+      expect(await robots.crawlDelayMs(server.url)).toBe(1_000);
+      expect(await robots.isAllowed(new URL("private/secret.html", server.url).href)).toBe(false);
+      expect(await robots.isAllowed(new URL("second.html", server.url).href)).toBe(true);
+    } finally {
+      await api.dispose();
+    }
   });
 
   test("refuses a target that robots.txt disallows unless told to ignore it", async () => {

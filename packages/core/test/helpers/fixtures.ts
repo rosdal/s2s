@@ -89,6 +89,10 @@ async function serveFile(root: string, req: IncomingMessage, res: ServerResponse
 export async function serveFixture(name: FixtureName): Promise<FixtureServer> {
   const root = path.join(FIXTURES_DIR, FIXTURE_ROOTS[name]);
   const server = createServer((req, res) => {
+    if (name === "static" && req.url === "/old.css") {
+      res.writeHead(302, { location: "/css/site.css" }).end();
+      return;
+    }
     if (name === "hostile" && req.url?.startsWith("/api/poll")) {
       res.writeHead(200, { "content-type": "application/json" }).end('{"ok":true}');
       return;

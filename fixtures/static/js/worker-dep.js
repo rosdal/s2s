@@ -1,0 +1,1 @@
+self.workerReady = true;

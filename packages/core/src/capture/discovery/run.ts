@@ -185,23 +185,32 @@ export class Discovery {
       return true;
     });
 
+    // The round cap applies per call, so each viewport gets its own budget.
+    let roundsThisRun = 0;
     while (queue.length > 0) {
       signal?.throwIfAborted();
-      if (this.rounds >= this.#limits.maxRounds) {
+      if (roundsThisRun >= this.#limits.maxRounds) {
         this.capped = true;
         break;
       }
+      roundsThisRun++;
       this.rounds++;
       const round = this.rounds;
       const refs: ChunkRef[] = [];
       for (const item of queue) {
         const text = await item.text().catch(() => "");
-        refs.push(...readRefs(item.kind, text, item.url));
+        try {
+          refs.push(...readRefs(item.kind, text, item.url));
+        } catch {
+          // One unreadable file must not sink discovery for the rest.
+        }
       }
 
       const toFetch: ChunkRef[] = [];
       for (const ref of refs) {
-        const candidates = ref.candidates.filter((c) => isFirstParty(new URL(c), this.#target));
+        const candidates = ref.candidates.filter(
+          (c) => URL.canParse(c) && isFirstParty(new URL(c), this.#target),
+        );
         const first = candidates[0];
         if (!first) continue;
         const key = resourceKey(first);
@@ -302,60 +311,71 @@ export class Discovery {
         limit(async () => {
           if (signal?.aborted || this.#probed.has(asset.url)) return;
           this.#probed.add(asset.url);
-          const fileUrl = new URL(asset.url);
-          if (!isFirstParty(fileUrl, this.#target)) return;
-          const text = (await readBody(asset.hash)).toString("utf8");
-          const header = asset.headers.sourcemap ?? asset.headers["x-sourcemap"];
-          const comment = [...text.matchAll(/[#@]\s*sourceMappingURL\s*=\s*([^\s'"*]+)/g)].at(
-            -1,
-          )?.[1];
-
-          if (!header && comment?.startsWith("data:")) {
-            const inline = decodeDataUrl(comment);
-            if (inline) await this.#saveMap(asset.url, null, "inline", inline);
-            return;
+          try {
+            await this.#probeOne(asset, readBody, signal);
+          } catch (error) {
+            if (signal?.aborted) throw error;
+            // A malformed sourceMappingURL or header skips this file only.
           }
-          let mapUrl: string;
-          let via: MapEntry["via"];
-          if (header) {
-            mapUrl = new URL(header, fileUrl).href;
-            via = "header";
-          } else if (comment) {
-            mapUrl = new URL(comment, fileUrl).href;
-            via = "comment";
-          } else {
-            const bare = new URL(fileUrl);
-            bare.search = "";
-            bare.hash = "";
-            mapUrl = `${bare.href}.map`;
-            via = "probe";
-          }
-          if (!isFirstParty(new URL(mapUrl), this.#target)) return;
-          const blind = this.#blindProbes.get(fileUrl.origin) ?? { hits: 0, misses: 0 };
-          this.#blindProbes.set(fileUrl.origin, blind);
-          if (via === "probe" && blind.hits === 0 && blind.misses >= BLIND_PROBE_GIVE_UP) {
-            this.blindProbesSkipped++;
-            return;
-          }
-          const result = await this.#fetch(
-            mapUrl,
-            "discover",
-            { type: "map-probe", url: asset.url },
-            signal,
-          );
-          const hit =
-            result.body !== null &&
-            result.status >= 200 &&
-            result.status < 300 &&
-            looksLikeMap(result.body);
-          if (via === "probe") {
-            if (hit) blind.hits++;
-            else blind.misses++;
-          }
-          if (hit && result.body) await this.#saveMap(asset.url, mapUrl, via, result.body);
         }),
       ),
     );
+  }
+
+  async #probeOne(
+    asset: CapturedAsset,
+    readBody: (hash: string) => Promise<Buffer>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const fileUrl = new URL(asset.url);
+    if (!isFirstParty(fileUrl, this.#target)) return;
+    const text = (await readBody(asset.hash)).toString("utf8");
+    const header = asset.headers.sourcemap ?? asset.headers["x-sourcemap"];
+    const comment = [...text.matchAll(/[#@]\s*sourceMappingURL\s*=\s*([^\s'"*]+)/g)].at(-1)?.[1];
+
+    if (!header && comment?.startsWith("data:")) {
+      const inline = decodeDataUrl(comment);
+      if (inline) await this.#saveMap(asset.url, null, "inline", inline);
+      return;
+    }
+    let mapUrl: string;
+    let via: MapEntry["via"];
+    if (header) {
+      mapUrl = new URL(header, fileUrl).href;
+      via = "header";
+    } else if (comment) {
+      mapUrl = new URL(comment, fileUrl).href;
+      via = "comment";
+    } else {
+      const bare = new URL(fileUrl);
+      bare.search = "";
+      bare.hash = "";
+      mapUrl = `${bare.href}.map`;
+      via = "probe";
+    }
+    if (!isFirstParty(new URL(mapUrl), this.#target)) return;
+    const blind = this.#blindProbes.get(fileUrl.origin) ?? { hits: 0, misses: 0 };
+    this.#blindProbes.set(fileUrl.origin, blind);
+    if (via === "probe" && blind.hits === 0 && blind.misses >= BLIND_PROBE_GIVE_UP) {
+      this.blindProbesSkipped++;
+      return;
+    }
+    const result = await this.#fetch(
+      mapUrl,
+      "discover",
+      { type: "map-probe", url: asset.url },
+      signal,
+    );
+    const hit =
+      result.body !== null &&
+      result.status >= 200 &&
+      result.status < 300 &&
+      looksLikeMap(result.body);
+    if (via === "probe") {
+      if (hit) blind.hits++;
+      else blind.misses++;
+    }
+    if (hit && result.body) await this.#saveMap(asset.url, mapUrl, via, result.body);
   }
 
   async #saveMap(

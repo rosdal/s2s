@@ -8,6 +8,7 @@ import { collectCdnPackages } from "./cdn.js";
 import { BLIND_PROBE_GIVE_UP, Discovery } from "./discovery/run.js";
 import { buildHar } from "./har.js";
 import { type Manifest, newManifest, readManifest, writeManifest } from "./manifest.js";
+import { isFirstParty } from "./origin.js";
 import { RUNTIME_PROBE } from "./probe.js";
 import { type CapturedAsset, Recorder, sleep, waitForQuiet } from "./recorder.js";
 import { type Phase, RequestLog, readRequestLog } from "./request-log.js";
@@ -157,8 +158,23 @@ export async function capture(options: CaptureOptions): Promise<CaptureResult> {
   const progress = options.onProgress ?? (() => {});
   const signal = options.signal;
 
-  const existing = await readManifest(paths.manifest);
+  let existing: Manifest | undefined;
+  try {
+    existing = await readManifest(paths.manifest);
+  } catch (error) {
+    // A corrupt or foreign manifest can only be replaced, never resumed.
+    if (!options.force) {
+      throw new Error(
+        `${paths.manifest} is unreadable (${(error as Error).message.split("\n")[0]}). Use --force to replace the workspace.`,
+      );
+    }
+  }
   if (existing) {
+    if (pageKey(existing.targetUrl) !== pageKey(target) && !options.force) {
+      throw new Error(
+        `${root} holds a capture of ${existing.targetUrl}. Use another --out folder, or --force to replace it.`,
+      );
+    }
     if (existing.stages.capture.status === "complete" && !options.force) {
       progress({ kind: "skip", workspace: root, reason: "capture is already complete" });
       return {
@@ -168,11 +184,6 @@ export async function capture(options: CaptureOptions): Promise<CaptureResult> {
         stats: existing.stages.capture.stats,
         warnings: existing.stages.capture.warnings,
       };
-    }
-    if (pageKey(existing.targetUrl) !== pageKey(target) && !options.force) {
-      throw new Error(
-        `${root} holds a capture of ${existing.targetUrl}. Use another --out folder, or --force to replace it.`,
-      );
     }
   }
 
@@ -278,16 +289,36 @@ export async function capture(options: CaptureOptions): Promise<CaptureResult> {
     const documents: { url: string; html: string }[] = [];
     let pageQueue: { url: string; depth: number }[] = [];
     const queued = new Set<string>();
-    const enqueue = (url: string, depth: number) => {
-      const clean = cleanUrl(url);
-      if (!clean || clean.origin !== target.origin || SKIP_LINK_EXT.test(clean.pathname)) return;
+    // Crawled links stay on the target's origin, or the origin it redirects to (apex to www,
+    // http to https). Listed pages may be anywhere on the same registrable domain.
+    const crawlOrigins = new Set([target.origin]);
+    const enqueue = (url: string, depth: number, listed = false): boolean => {
+      const clean = cleanUrl(url, target);
+      if (!clean || SKIP_LINK_EXT.test(clean.pathname)) return false;
+      if (listed ? !isFirstParty(clean, target) : !crawlOrigins.has(clean.origin)) return false;
       const key = pageKey(clean);
-      if (queued.has(key)) return;
+      if (queued.has(key)) return true;
       queued.add(key);
       pageQueue.push({ url: clean.href, depth });
+      return true;
     };
     enqueue(target.href, 0);
-    for (const page of options.pages ?? []) enqueue(page, opts.depth);
+    for (const page of options.pages ?? []) {
+      if (!enqueue(page, opts.depth, true))
+        warn(`Skipped listed page ${page}: not a page on ${target.hostname}'s site`);
+    }
+    // Different URLs can slug the same (`/blog/post` and `/blog-post`); later ones get a suffix.
+    const slugs = new Map<string, string>();
+    const slugFor = (url: string): string => {
+      const key = pageKey(url);
+      const known = slugs.get(key);
+      if (known) return known;
+      let slug = pageSlug(url);
+      const taken = new Set(slugs.values());
+      for (let n = 2; taken.has(slug); n++) slug = `${pageSlug(url)}-${n}`;
+      slugs.set(key, slug);
+      return slug;
+    };
 
     for (const [viewportIndex, viewport] of opts.viewports.entries()) {
       const primary = viewportIndex === 0;
@@ -313,7 +344,7 @@ export async function capture(options: CaptureOptions): Promise<CaptureResult> {
           await sleep(Math.max(opts.delayMs, crawlDelay ?? 0), signal);
         }
 
-        const slug = pageSlug(item.url);
+        const slug = slugFor(item.url);
         const pageResult = await capturePage({
           context,
           recorder,
@@ -338,6 +369,7 @@ export async function capture(options: CaptureOptions): Promise<CaptureResult> {
           if (pageResult.ssr !== undefined)
             documents.push({ url: pageResult.finalUrl, html: pageResult.ssr });
           documents.push({ url: pageResult.finalUrl, html: pageResult.dom });
+          if (index === 0) crawlOrigins.add(new URL(pageResult.finalUrl).origin);
           if (!options.pages && item.depth < opts.depth) {
             for (const link of pageResult.links) enqueue(link, item.depth + 1);
           }

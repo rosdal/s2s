@@ -7,7 +7,7 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!packages/core/test/samples"]
+    "includes": ["**", "!packages/core/test/samples", "!.changeset/*.md"]
   },
   "formatter": {
     "enabled": true,

@@ -115,7 +115,6 @@ export class Recorder {
     this.#inflight.delete(request);
     this.#lastActivity = Date.now();
     const tag = this.#tags.get(request) ?? this.tag;
-    this.seen.add(url);
     try {
       const response = failure ? null : await request.response();
       const status = response?.status() ?? 0;
@@ -141,6 +140,8 @@ export class Recorder {
         }
       }
       if (failure || status >= 400) this.failed++;
+      // Requests that never got a response (aborted, network error) stay fetchable by discovery.
+      if (status > 0) this.seen.add(url);
 
       const timing = request.timing();
       const durationMs = timing.responseEnd >= 0 ? Math.round(timing.responseEnd) : null;

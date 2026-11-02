@@ -50,6 +50,10 @@ describe("readWebpackRefs", () => {
       "http://h/app/static/js/vendors~main.8f2a.chunk.js",
     ]);
   });
+  test("an unparsable public path yields nothing instead of throwing", () => {
+    const text = 'r.p="http://localhost:__PORT__/",r.u=e=>({1:"a"}[e]+".js")';
+    expect(readWebpackRefs(text, "http://h/runtime.js")).toEqual([]);
+  });
   test("files without a webpack runtime yield nothing", () => {
     expect(readWebpackRefs("console.log('x.p=1')", "http://h/a.js")).toEqual([]);
   });

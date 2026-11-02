@@ -91,6 +91,12 @@ describe("CDN URL parser", () => {
     );
     expect(hits.map((h) => `${h.name}@${h.version}`)).toEqual(["a@1.0.0", "@b/c@2.0.0"]);
   });
+  test("malformed percent-escapes don't throw", () => {
+    expect(parseCdnUrl("https://unpkg.com/foo%zz@1.0.0/index.js")).toEqual([]);
+    expect(parseCdnUrl("https://unpkg.com/foo@1.0%zz/index.js")).toEqual([
+      expect.objectContaining({ name: "foo", version: "1.0%zz" }),
+    ]);
+  });
   test("non-CDN URLs and GitHub paths yield nothing", () => {
     expect(parseCdnUrl("https://example.com/npm/a@1/x.js")).toEqual([]);
     expect(parseCdnUrl("https://cdn.jsdelivr.net/gh/user/repo@1/x.js")).toEqual([]);

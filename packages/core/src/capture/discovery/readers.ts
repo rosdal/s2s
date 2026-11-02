@@ -223,7 +223,8 @@ export function readWebpackRefs(text: string, fileUrl: string): ChunkRef[] {
   const publicPath =
     rawPublicPath === undefined || rawPublicPath === "auto"
       ? new URL(".", fileUrl).href
-      : new URL(rawPublicPath, fileUrl).href;
+      : resolve(rawPublicPath, fileUrl);
+  if (!publicPath) return [];
 
   const names = new Set<string>();
   for (const pattern of [CHUNK_FN, LEGACY_CHUNK_FN]) {

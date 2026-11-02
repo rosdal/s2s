@@ -167,7 +167,8 @@ describe("static fixture", () => {
       }),
     );
     const { result, paths, records } = await run(server, "pages-auth", {
-      pages: [new URL("about.html", server.url).href],
+      // Relative entries resolve against the target.
+      pages: ["/about.html"],
       authState,
     });
     expect(result.status).toBe("complete");
@@ -175,6 +176,27 @@ describe("static fixture", () => {
     const about = records.find((r) => pathOf(r.url) === "/about.html");
     expect(about?.phase).toBe("crawl");
     expect(about?.requestHeaders.cookie).toBe("session=abc");
+  });
+
+  test("a complete workspace for another URL is refused, not skipped", async () => {
+    await run(server, "other-target");
+    await expect(run(server, "other-target", {}, "/about.html")).rejects.toThrow(
+      /holds a capture of/,
+    );
+  });
+
+  test("an unreadable manifest needs --force, which replaces it", async () => {
+    const outDir = path.join(tmp, "corrupt");
+    await run(server, "corrupt");
+    await writeFile(path.join(outDir, "manifest.json"), "{ truncated");
+    await expect(run(server, "corrupt")).rejects.toThrow(/unreadable.*--force/);
+    const { result } = await run(server, "corrupt", { force: true });
+    expect(result.status).toBe("complete");
+  });
+
+  test("pages whose slugs collide keep separate folders", async () => {
+    const { paths } = await run(server, "slugs", { pages: ["/a/b.html", "/a-b.html"] });
+    expect((await readdir(paths.pages)).sort()).toEqual(["a-b-html", "a-b-html-2", "index"]);
   });
 
   test("--har writes a HAR next to the request log", async () => {

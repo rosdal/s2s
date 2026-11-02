@@ -1,3 +1,11 @@
+function decode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 export interface CdnPackageHit {
   name: string;
   /** Exact version or range from the URL; `null` when the URL is unversioned (latest). */
@@ -15,12 +23,12 @@ const NPM_SPEC = /^((?:@[^/@]+\/)?[^/@]+)(?:@([^/]+))?(\/.*)?$/;
 function npmSpec(spec: string, cdn: CdnPackageHit["cdn"]): CdnPackageHit | undefined {
   const match = NPM_SPEC.exec(spec);
   if (!match?.[1]) return undefined;
-  const name = decodeURIComponent(match[1]);
+  const name = decode(match[1]);
   if (!/^(@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*$/i.test(name)) return undefined;
   const file = match[3] && match[3] !== "/" ? match[3] : null;
   return {
     name,
-    version: match[2] ? decodeURIComponent(match[2]) : null,
+    version: match[2] ? decode(match[2]) : null,
     cdn,
     registry: "npm",
     file,

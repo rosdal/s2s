@@ -1,0 +1,12 @@
+{
+  "package": "chart.js",
+  "patterns": [
+    {
+      "id": "static-version",
+      "regex": "version\\s*=\\s*{q}(?<version>[234]\\.{semverTail}){q}",
+      "anchors": ["getChart", "registry", "overrides"],
+      "minAnchors": 2,
+      "window": 300
+    }
+  ]
+}

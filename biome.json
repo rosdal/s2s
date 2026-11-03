@@ -7,7 +7,12 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!packages/core/test/samples", "!.changeset/*.md"]
+    "includes": [
+      "**",
+      "!packages/core/test/samples",
+      "!.changeset/*.md",
+      "!fixtures/registry/*.json"
+    ]
   },
   "formatter": {
     "enabled": true,

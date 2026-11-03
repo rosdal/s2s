@@ -1,0 +1,11 @@
+{
+  "package": "moment",
+  "patterns": [
+    {
+      "id": "moment-version",
+      "regex": "\\.version\\s*=\\s*{q}(?<version>2\\.{semverTail}){q}",
+      "anchors": ["Invalid date", "isMoment", "_isAMomentObject"],
+      "window": 4000
+    }
+  ]
+}

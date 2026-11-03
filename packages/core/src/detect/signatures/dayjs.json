@@ -1,0 +1,12 @@
+{
+  "package": "dayjs",
+  "patterns": [
+    {
+      "id": "dayjs-object",
+      "regex": "{q}\\$isDayjsObject{q}",
+      "anchors": ["Invalid Date", "YYYY-MM-DDTHH:mm:ssZ"],
+      "window": 3000,
+      "maxMatches": 1
+    }
+  ]
+}

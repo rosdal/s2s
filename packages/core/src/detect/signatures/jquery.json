@@ -1,0 +1,17 @@
+{
+  "package": "jquery",
+  "patterns": [
+    {
+      "id": "core-version",
+      "regex": "{q}(?<version>[1-4]\\.{semverTail}){q}\\s*,\\s*\\w+\\s*=\\s*/HTML\\$/i",
+      "anchors": ["jquery"],
+      "window": 600
+    },
+    {
+      "id": "fn-jquery",
+      "regex": "jquery\\s*:\\s*{q}(?<version>[1-4]\\.{semverTail}){q}",
+      "anchors": ["constructor"],
+      "window": 200
+    }
+  ]
+}

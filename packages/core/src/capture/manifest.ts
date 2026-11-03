@@ -15,6 +15,10 @@ export const StageState = z.object({
   error: z.string().optional(),
   /** Things that went wrong without stopping the stage, for the user to read. */
   warnings: z.array(z.string()).default([]),
+  /** Named results that are not counts, such as the lockfile an install wrote. */
+  details: z
+    .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
+    .optional(),
 });
 export type StageState = z.infer<typeof StageState>;
 
@@ -32,6 +36,8 @@ export const Manifest = z.object({
     capture: StageState,
     /** Stage 2. Workspaces written before it existed read as `pending`. */
     maps: StageState.default(pendingStage),
+    /** Stage 3. Workspaces written before it existed read as `pending`. */
+    detect: StageState.default(pendingStage),
   }),
 });
 export type Manifest = z.infer<typeof Manifest>;
@@ -49,7 +55,7 @@ export function newManifest(input: {
     createdAt: now,
     updatedAt: now,
     options: input.options,
-    stages: { capture: pendingStage(), maps: pendingStage() },
+    stages: { capture: pendingStage(), maps: pendingStage(), detect: pendingStage() },
   };
 }
 

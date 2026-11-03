@@ -1,0 +1,19 @@
+{
+  "name": "@s2s-fixtures/version-strings",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build"
+  },
+  "dependencies": {
+    "dayjs": "1.11.23",
+    "gsap": "3.15.0",
+    "lodash": "4.18.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "three": "0.187.0"
+  },
+  "devDependencies": {
+    "vite": "^8.3.5"
+  }
+}

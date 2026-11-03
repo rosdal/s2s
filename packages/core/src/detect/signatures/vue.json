@@ -1,0 +1,17 @@
+{
+  "package": "vue",
+  "patterns": [
+    {
+      "id": "version-const",
+      "regex": "=\\s*{q}(?<version>3\\.{semverTail}){q}",
+      "anchors": ["__vccOpts"],
+      "window": 300
+    },
+    {
+      "id": "global-build",
+      "regex": "version\\s*:\\s*{q}(?<version>[23]\\.{semverTail}){q}",
+      "anchors": ["__VUE_OPTIONS_API__", "compileToFunction"],
+      "window": 4000
+    }
+  ]
+}

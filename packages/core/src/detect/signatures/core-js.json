@@ -1,0 +1,11 @@
+{
+  "package": "core-js",
+  "patterns": [
+    {
+      "id": "shared-versions",
+      "regex": "version\\s*:\\s*{q}(?<version>{semver}){q}\\s*,\\s*mode\\s*:",
+      "anchors": ["Denis Pushkarev", "zloirock"],
+      "window": 400
+    }
+  ]
+}

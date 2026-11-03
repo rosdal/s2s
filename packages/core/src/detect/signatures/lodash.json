@@ -1,0 +1,11 @@
+{
+  "package": "lodash",
+  "patterns": [
+    {
+      "id": "lodash-version",
+      "regex": "\\.VERSION\\s*=\\s*{q}(?<version>4\\.{semverTail}){q}",
+      "anchors": ["bindKey", "curryRight", "__lodash_hash_undefined__", "lodash_placeholder"],
+      "window": 3000
+    }
+  ]
+}

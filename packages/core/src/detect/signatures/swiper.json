@@ -1,0 +1,12 @@
+{
+  "package": "swiper",
+  "patterns": [
+    {
+      "id": "class-names",
+      "regex": "{q}swiper-wrapper{q}",
+      "anchors": ["swiper-slide", "swiper-initialized"],
+      "window": 20000,
+      "maxMatches": 1
+    }
+  ]
+}

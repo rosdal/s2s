@@ -1,0 +1,12 @@
+{
+  "package": "svelte",
+  "patterns": [
+    {
+      "id": "disclose-version",
+      "regex": "\\.v\\.add\\(\\s*{q}(?<version>\\d+){q}\\s*\\)",
+      "anchors": ["__svelte"],
+      "window": 120,
+      "versionTemplate": "{version}.x"
+    }
+  ]
+}

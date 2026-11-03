@@ -1,0 +1,12 @@
+{
+  "package": "react",
+  "patterns": [
+    {
+      "id": "exports-version",
+      "regex": "\\.version\\s*=\\s*{q}(?<version>{semver}){q}",
+      "anchors": ["useDeferredValue", "useTransition", "useSyncExternalStore", "cloneElement"],
+      "minAnchors": 2,
+      "window": 2500
+    }
+  ]
+}

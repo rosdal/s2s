@@ -1,0 +1,11 @@
+{
+  "name": "s2s-postinstall-marker",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "preinstall": "node marker.cjs",
+    "install": "node marker.cjs",
+    "postinstall": "node marker.cjs"
+  }
+}

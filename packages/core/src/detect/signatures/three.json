@@ -1,0 +1,19 @@
+{
+  "package": "three",
+  "patterns": [
+    {
+      "id": "three-global",
+      "regex": "__THREE__\\s*=\\s*{q}(?<version>\\d{2,3}){q}",
+      "anchors": ["__THREE__"],
+      "window": 100,
+      "versionTemplate": "0.{version}.x"
+    },
+    {
+      "id": "revision-const",
+      "regex": "REVISION\\s*=\\s*{q}(?<version>\\d{2,3}){q}",
+      "anchors": ["WebGLRenderer", "__THREE__"],
+      "window": 20000,
+      "versionTemplate": "0.{version}.x"
+    }
+  ]
+}

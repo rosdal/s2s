@@ -30,6 +30,12 @@ pnpm changeset
 
 Pick the package and bump type, write a one-line summary for the changelog, and commit the generated file in `.changeset/` with your change. Docs-only and tooling-only changes don't need one.
 
+### Package signatures
+
+`s2s detect` finds packages in bundles that have no source maps or banners by matching version strings. Each package has one file in `packages/core/src/detect/signatures/`: a regex with a named `version` group, plus anchor tokens that must appear nearby, so a stray `"4.17.21"` never counts on its own. To add a package, add its file, import it in `signatures.ts`, and add a test with a real excerpt from the package's minified build to `packages/core/test/detect-units.test.ts`.
+
+The Stage 3 tests read npm registry answers from `fixtures/registry/`. If a fixture starts naming a new package, record it with `node fixtures/registry/record.mjs <name>`.
+
 ## Ground rules
 
 - Never commit captured sites. `workspaces/` is gitignored for that reason.

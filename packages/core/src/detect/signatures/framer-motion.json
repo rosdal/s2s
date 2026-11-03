@@ -1,0 +1,11 @@
+{
+  "package": "framer-motion",
+  "patterns": [
+    {
+      "id": "motion-value",
+      "regex": "this\\.version\\s*=\\s*{q}(?<version>{semver}){q}\\s*,\\s*this\\.canTrackVelocity",
+      "anchors": ["canTrackVelocity"],
+      "window": 200
+    }
+  ]
+}

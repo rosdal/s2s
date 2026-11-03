@@ -1,0 +1,12 @@
+{
+  "package": "d3",
+  "patterns": [
+    {
+      "id": "d3-version",
+      "regex": "\\.version\\s*=\\s*{q}(?<version>[4-7]\\.{semverTail}){q}",
+      "anchors": ["utcYear", "forceSimulation", "scaleLinear", "geoPath", "zoomIdentity"],
+      "minAnchors": 2,
+      "window": 600
+    }
+  ]
+}

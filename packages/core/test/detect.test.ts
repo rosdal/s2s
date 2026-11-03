@@ -384,6 +384,30 @@ describe("install-matrix", () => {
     });
   }
 
+  test("Ctrl+C during the install marks the stage partial, not complete", async () => {
+    const pm = MANAGERS.find((m) => m.version && (m.pm === "npm" || m.pm === "pnpm"));
+    if (!pm?.version) return;
+    const outDir = path.join(tmp, "runs", `interrupted-${runs++}`);
+    await cp(await capturedWorkspace("hostile-banner"), outDir, { recursive: true });
+    const controller = new AbortController();
+    const result = await detect({
+      workspace: outDir,
+      offline: true,
+      install: true,
+      pm: pm.pm,
+      managerVersion: localVersion,
+      signal: controller.signal,
+      onProgress: (event) => {
+        if (event.kind === "install") controller.abort(new Error("Interrupted"));
+      },
+    });
+    expect(result).toMatchObject({ status: "partial", error: "Interrupted" });
+    const manifest = await readManifest(workspacePaths(outDir).manifest);
+    expect(manifest?.stages.detect.status).toBe("partial");
+    // A rerun must not skip a stage that never finished.
+    expect((await detect({ workspace: outDir, offline: true })).skipped).toBe(false);
+  });
+
   test("detect --install records the exit code and lockfile in the manifest", async () => {
     const pm = MANAGERS.find((m) => m.version && (m.pm === "npm" || m.pm === "pnpm"));
     if (!pm?.version) return;

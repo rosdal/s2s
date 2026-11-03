@@ -1,0 +1,13 @@
+{
+  "package": "regenerator-runtime",
+  "patterns": [
+    {
+      "id": "runtime-strings",
+      "regex": "Generator is already running",
+      "anchors": ["suspendedStart", "suspendedYield", "try statement without catch or finally"],
+      "minAnchors": 2,
+      "window": 6000,
+      "maxMatches": 1
+    }
+  ]
+}

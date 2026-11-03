@@ -1,0 +1,11 @@
+{
+  "package": "gsap",
+  "patterns": [
+    {
+      "id": "core-version",
+      "regex": "version\\s*=\\s*{q}(?<version>3\\.{semverTail}){q}",
+      "anchors": ["Power0", "Power1", "registerPlugin"],
+      "window": 600
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "package": "axios",
+  "patterns": [
+    {
+      "id": "axios-version",
+      "regex": "\\.VERSION\\s*=\\s*{q}(?<version>[01]\\.{semverTail}){q}",
+      "anchors": ["CancelToken", "AxiosError", "isCancel", "toFormData"],
+      "minAnchors": 2,
+      "window": 600
+    },
+    {
+      "id": "version-const",
+      "regex": "=\\s*{q}(?<version>[01]\\.{semverTail}){q}",
+      "anchors": ["AxiosError", "ERR_BAD_OPTION_VALUE"],
+      "minAnchors": 2,
+      "window": 3000
+    }
+  ]
+}

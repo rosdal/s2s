@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { type FixtureServer, serveFixture } from "../../core/test/helpers/fixtures.js";
+import { tableLines } from "../src/commands/detect.js";
 import { type CliIO, runCli } from "../src/main.js";
 
 function io(onLine?: (line: string, interrupt: () => void) => void) {
@@ -165,5 +166,68 @@ describe("s2s maps", () => {
     const { cliIO, out } = io();
     expect(await runCli(["maps", "--help"], "0.0.0", cliIO)).toBe(0);
     expect(out.join("\n")).toContain("--force");
+  });
+});
+
+describe("s2s detect", () => {
+  test("writes package.json offline, skips a complete stage, and explains a package", async () => {
+    const out = path.join(tmp, "detect");
+    expect(await runCli(["capture", server.url, "--out", out, ...FAST], "0.0.0", io().cliIO)).toBe(
+      0,
+    );
+    expect(await runCli(["maps", out], "0.0.0", io().cliIO)).toBe(0);
+    const first = io();
+    expect(await runCli(["detect", out, "--offline"], "0.0.0", first.cliIO)).toBe(0);
+    expect(first.err.join("\n")).toMatch(/Detect complete: 0 packages: 0 dependencies/);
+    expect(first.out).toEqual(["No packages found."]);
+    const pkg = JSON.parse(await readFile(path.join(out, "project", "package.json"), "utf8"));
+    expect(pkg).toMatchObject({ name: "127-0-0-1", private: true, dependencies: {} });
+
+    const again = io();
+    expect(await runCli(["detect", out, "--offline", "--json"], "0.0.0", again.cliIO)).toBe(0);
+    expect(JSON.parse(again.out.join("\n"))).toMatchObject({ skipped: true, status: "complete" });
+
+    const explained = io();
+    expect(
+      await runCli(["detect", out, "--offline", "--explain", "react"], "0.0.0", explained.cliIO),
+    ).toBe(1);
+    expect(explained.out).toEqual(["No evidence for react in this workspace."]);
+  });
+
+  test("bad flag values are usage errors", async () => {
+    for (const args of [
+      ["--pm", "pip"],
+      ["--min-confidence", "certain"],
+      ["--ranges", "tilde"],
+    ]) {
+      const { cliIO, err } = io();
+      expect(await runCli(["detect", tmp, ...args], "0.0.0", cliIO)).toBe(2);
+      expect(err.join("\n")).toContain(args[0]);
+    }
+  });
+
+  test("the summary table lines up package, version, confidence, status and signals", () => {
+    expect(
+      tableLines([
+        {
+          name: "react",
+          version: "19.3.1",
+          confidence: "high",
+          status: "dependency",
+          signals: ["cdn-url"],
+        },
+        { name: "scheduler", version: null, confidence: "low", status: "transitive", signals: [] },
+      ]),
+    ).toEqual([
+      "package    version  confidence  status      signals",
+      "react      19.3.1   high        dependency  cdn-url",
+      "scheduler  -        low         transitive  implied",
+    ]);
+  });
+
+  test("--help shows the detect usage", async () => {
+    const { cliIO, out } = io();
+    expect(await runCli(["detect", "--help"], "0.0.0", cliIO)).toBe(0);
+    expect(out.join("\n")).toContain("--explain");
   });
 });

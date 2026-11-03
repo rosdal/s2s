@@ -1,0 +1,13 @@
+{
+  "package": "preact",
+  "patterns": [
+    {
+      "id": "mangled-internals",
+      "regex": "\\.__k\\b",
+      "anchors": [".__v", ".__e", ".__c", ".__b"],
+      "minAnchors": 3,
+      "window": 400,
+      "maxMatches": 1
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "package": "zod",
+  "patterns": [
+    {
+      "id": "zod-errors",
+      "regex": "{q}ZodError{q}",
+      "anchors": ["invalid_type", "too_small", "ZodString", "invalid_union"],
+      "minAnchors": 2,
+      "window": 30000,
+      "maxMatches": 1
+    }
+  ]
+}

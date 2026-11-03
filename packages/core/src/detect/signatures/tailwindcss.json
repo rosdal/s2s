@@ -1,0 +1,21 @@
+{
+  "package": "tailwindcss",
+  "dev": true,
+  "patterns": [
+    {
+      "id": "css-banner",
+      "regex": "tailwindcss v(?<version>{semver})",
+      "anchors": ["tailwindcss.com"],
+      "window": 200,
+      "files": "css"
+    },
+    {
+      "id": "tw-variables",
+      "regex": "--tw-ring-offset-shadow",
+      "anchors": ["--tw-shadow", "--tw-ring-color", "--tw-translate-x"],
+      "window": 5000,
+      "files": "css",
+      "maxMatches": 1
+    }
+  ]
+}

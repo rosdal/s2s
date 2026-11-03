@@ -1,0 +1,18 @@
+{
+  "package": "react-dom",
+  "patterns": [
+    {
+      "id": "devtools-renderer",
+      "regex": "version\\s*:\\s*{q}(?<version>{semver}){q}\\s*,\\s*rendererPackageName\\s*:\\s*{q}react-dom{q}",
+      "anchors": ["rendererPackageName"],
+      "window": 200
+    },
+    {
+      "id": "exports-version",
+      "regex": "\\.version\\s*=\\s*{q}(?<version>{semver}){q}",
+      "anchors": ["createPortal", "flushSync", "useFormStatus", "unstable_batchedUpdates"],
+      "minAnchors": 2,
+      "window": 2500
+    }
+  ]
+}

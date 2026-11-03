@@ -20,7 +20,12 @@ export type FixtureName =
   | "pnpm-vendor"
   | "css-preprocessor"
   | "hostile-map"
-  | "hostile";
+  | "hostile"
+  | "webpack-license"
+  | "vite-banners"
+  | "version-strings"
+  | "vue-app"
+  | "hostile-banner";
 
 /** Folder each fixture is served from; fixtures with a build step serve their build output. */
 export const FIXTURE_ROOTS: Record<FixtureName, string> = {
@@ -37,6 +42,11 @@ export const FIXTURE_ROOTS: Record<FixtureName, string> = {
   "css-preprocessor": "css-preprocessor/dist",
   "hostile-map": "hostile-map",
   hostile: "hostile",
+  "webpack-license": "webpack-license/dist",
+  "vite-banners": "vite-banners/dist",
+  "version-strings": "version-strings/dist",
+  "vue-app": "vue-app/dist",
+  "hostile-banner": "hostile-banner",
 };
 
 export const BUILT_FIXTURES = [
@@ -49,6 +59,10 @@ export const BUILT_FIXTURES = [
   "webpack-namespace",
   "pnpm-vendor",
   "css-preprocessor",
+  "webpack-license",
+  "vite-banners",
+  "version-strings",
+  "vue-app",
 ] as const;
 
 const TYPES: Record<string, string> = {

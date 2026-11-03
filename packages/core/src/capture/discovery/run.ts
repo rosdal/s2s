@@ -7,7 +7,7 @@ import { classifyOrigin, isFirstParty } from "../origin.js";
 import { assetKind, type CapturedAsset, mimeOf } from "../recorder.js";
 import type { RequestLog } from "../request-log.js";
 import { resourceKey } from "../url.js";
-import { type ChunkRef, type RefSource, readRefs } from "./readers.js";
+import { type ChunkRef, type RefSource, readLicenseRef, readRefs } from "./readers.js";
 
 export interface DiscoveryEntry {
   url: string;
@@ -200,14 +200,18 @@ export class Discovery {
       this.rounds++;
       const round = this.rounds;
       const refs: ChunkRef[] = [];
+      const licenses: { url: string; from: string }[] = [];
       for (const item of queue) {
         const text = await item.text().catch(() => "");
         try {
           refs.push(...readRefs(item.kind, text, item.url));
+          const license = item.kind === "js" ? readLicenseRef(text, item.url) : undefined;
+          if (license) licenses.push({ url: license, from: item.url });
         } catch {
           // One unreadable file must not sink discovery for the rest.
         }
       }
+      await this.#fetchLicenses(licenses, round, signal);
 
       const toFetch: ChunkRef[] = [];
       for (const ref of refs) {
@@ -296,6 +300,32 @@ export class Discovery {
       queue = next;
     }
     return found;
+  }
+
+  /**
+   * Fetch the `*.LICENSE.txt` files webpack bundles point at. Terser moves the license banners
+   * there, so they carry the package names and versions Stage 3 reads. They are logged and stored
+   * like any discovery fetch, but never scanned for chunk references.
+   */
+  async #fetchLicenses(
+    licenses: { url: string; from: string }[],
+    round: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    for (const { url, from } of licenses) {
+      signal?.throwIfAborted();
+      if (!URL.canParse(url) || !isFirstParty(new URL(url), this.#target)) continue;
+      const key = resourceKey(url);
+      if (this.#entries.has(key) || this.#known(url)) continue;
+      const entry: DiscoveryEntry = { url, source: "license", from, round, status: "failed" };
+      this.#entries.set(key, entry);
+      const result = await this.#fetch(url, "discover", { type: "discovery", url: from }, signal);
+      const html = mimeOf(result.headers)?.includes("html") ?? false;
+      if (result.status >= 200 && result.status < 300 && result.hash && !html) {
+        entry.status = "fetched";
+        entry.hash = result.hash;
+      }
+    }
   }
 
   /**

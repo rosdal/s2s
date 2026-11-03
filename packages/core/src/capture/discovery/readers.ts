@@ -12,7 +12,8 @@ export type RefSource =
   | "vite"
   | "importmap"
   | "preload"
-  | "html";
+  | "html"
+  | "license";
 
 export interface ChunkRef {
   /** Absolute URLs to try in order; the first that answers with a non-HTML 2xx wins. */
@@ -385,6 +386,17 @@ export function readHtmlRefs(html: string, pageUrl: string): ChunkRef[] {
     }
   }
   return refs;
+}
+
+/**
+ * The `*.LICENSE.txt` file named by webpack's `/*! For license information please see … *\/`
+ * comment, as an absolute URL. The comment sits at the very top of the bundle.
+ */
+export function readLicenseRef(text: string, fileUrl: string): string | undefined {
+  const ref = /\/\*!\s*For license information please see\s+(\S+?\.LICENSE\.txt)\s*\*\//.exec(
+    text.slice(0, 2048),
+  )?.[1];
+  return ref ? resolve(ref, fileUrl) : undefined;
 }
 
 /** Run every reader that applies to a file of the given kind. */

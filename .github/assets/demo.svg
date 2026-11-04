@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="888" viewBox="0 0 880 888" role="img" aria-label="s2s grab run against a local test fixture">
+<title>s2s grab, recorded against the vite-react test fixture</title>
+<style>
+text { font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #d4d4d4; white-space: pre; opacity: 0; animation: show 0.01s forwards; }
+.cmd { fill: #7ee787; }
+@keyframes show { to { opacity: 1; } }
+</style>
+<rect width="100%" height="100%" rx="8" fill="#1e1e1e"/>
+<circle cx="20" cy="16" r="5" fill="#ff5f56"/><circle cx="38" cy="16" r="5" fill="#ffbd2e"/><circle cx="56" cy="16" r="5" fill="#27c93f"/>
+<text x="16" y="44" style="animation-delay:0.00s" class="cmd">$ s2s grab http://127.0.0.1:4173/ --out vite-react --viewports desktop --offline --delay 0</text>
+<text x="16" y="62" style="animation-delay:0.45s"> </text>
+<text x="16" y="80" style="animation-delay:0.90s">Capturing http://127.0.0.1:4173/</text>
+<text x="16" y="98" style="animation-delay:0.90s">  into vite-react</text>
+<text x="16" y="116" style="animation-delay:1.35s">  load     desktop index                requests 0 · stored 0 B · chunks discovered 0 · maps 0</text>
+<text x="16" y="134" style="animation-delay:1.80s">  snapshot desktop index                requests 1 · stored 401 B · chunks discovered 0 · maps 0</text>
+<text x="16" y="152" style="animation-delay:2.25s">  interact desktop index                requests 1 · stored 401 B · chunks discovered 0 · maps 0</text>
+<text x="16" y="170" style="animation-delay:2.70s">  discover desktop                      requests 4 · stored 217.5 KB · chunks discovered 0 · maps 0</text>
+<text x="16" y="188" style="animation-delay:3.15s">  maps     desktop                      requests 7 · stored 217.6 KB · chunks discovered 0 · maps 0</text>
+<text x="16" y="206" style="animation-delay:3.60s">Capture complete: requests 15 · stored 217.8 KB · chunks discovered 2 · maps 0</text>
+<text x="16" y="224" style="animation-delay:4.05s"> </text>
+<text x="16" y="242" style="animation-delay:4.50s">Reading source maps in vite-react</text>
+<text x="16" y="260" style="animation-delay:4.95s">Maps complete: 0 maps, 0 sources recovered, 0% of first-party JS covered</text>
+<text x="16" y="278" style="animation-delay:5.40s"> </text>
+<text x="16" y="296" style="animation-delay:5.85s">Detecting packages in vite-react</text>
+<text x="16" y="314" style="animation-delay:6.30s">Detect complete: 2 packages: 2 dependencies, 0 devDependencies, 0 for review</text>
+<text x="16" y="332" style="animation-delay:6.75s">package    version  confidence  status      signals</text>
+<text x="16" y="350" style="animation-delay:6.75s">react      19.3.1   medium      dependency  framework-marker, version-string</text>
+<text x="16" y="368" style="animation-delay:6.75s">react-dom  19.3.1   medium      dependency  version-string</text>
+<text x="16" y="386" style="animation-delay:7.20s"> </text>
+<text x="16" y="404" style="animation-delay:7.65s">Unbundling vite-react</text>
+<text x="16" y="422" style="animation-delay:8.10s">Unbundle complete: vite · 7 modules · 98% vendor dropped · 1 group</text>
+<text x="16" y="440" style="animation-delay:8.55s"> </text>
+<text x="16" y="458" style="animation-delay:9.00s">Scaffolding vite-react</text>
+<text x="16" y="476" style="animation-delay:9.45s">  files</text>
+<text x="16" y="494" style="animation-delay:9.90s">  install</text>
+<text x="16" y="512" style="animation-delay:10.35s">  build</text>
+<text x="16" y="530" style="animation-delay:10.80s">  git</text>
+<text x="16" y="548" style="animation-delay:11.25s">Scaffold complete: react · 7 modules · build passed</text>
+<text x="16" y="566" style="animation-delay:11.70s"> </text>
+<text x="16" y="584" style="animation-delay:11.70s">Checking the untouched scaffold against the capture</text>
+<text x="16" y="602" style="animation-delay:12.15s">Building project/</text>
+<text x="16" y="620" style="animation-delay:12.60s">  checking index (desktop)</text>
+<text x="16" y="638" style="animation-delay:13.05s">Verify passed: pass · 1 check</text>
+<text x="16" y="656" style="animation-delay:13.50s"> </text>
+<text x="16" y="674" style="animation-delay:13.50s">Workspace: vite-react</text>
+<text x="16" y="692" style="animation-delay:13.50s">  Source maps:  0 maps, 0 sources recovered, 0% of first-party JS covered</text>
+<text x="16" y="710" style="animation-delay:13.50s">  Packages:     2 packages: 2 dependencies, 0 devDependencies, 0 for review</text>
+<text x="16" y="728" style="animation-delay:13.50s">                0 high, 2 medium, 0 low confidence; 0 to review</text>
+<text x="16" y="746" style="animation-delay:13.50s">  Modules:      vite · 7 modules · 98% vendor dropped · 1 group</text>
+<text x="16" y="764" style="animation-delay:13.50s">  Scaffold:     react · 7 modules · build passed</text>
+<text x="16" y="782" style="animation-delay:13.50s">  Baseline:     verify passes</text>
+<text x="16" y="800" style="animation-delay:13.50s"> </text>
+<text x="16" y="818" style="animation-delay:13.50s">Next: hand it to Claude Code</text>
+<text x="16" y="836" style="animation-delay:13.50s">  cd vite-react &amp;&amp; claude "$(cat PROMPT.md)"</text>
+<text x="16" y="854" style="animation-delay:13.50s">or run `claude` there and type /s2s</text>
+</svg>

@@ -22,6 +22,10 @@ npx @rosdal/s2s grab https://example.com
 cd example-com && claude "$(cat PROMPT.md)"
 ```
 
+![A recorded s2s grab run against the vite-react test fixture: capture, maps, detect, unbundle, scaffold, then a passing verify and the Claude Code command](.github/assets/demo.svg)
+
+The recording is a real run against a local test fixture (`.github/assets/demo.cast`; replay it with `asciinema play`).
+
 Run `s2s` with no arguments for a guided prompt instead. Each stage is also its own command, and every stage resumes from the workspace's `manifest.json`, so rerunning `grab` after an interruption continues where it stopped:
 
 | Command             | Stage                                                                |

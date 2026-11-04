@@ -211,7 +211,7 @@ export function summaryLine(stats: Record<string, number>): string {
   const n = (k: string) => stats[k] ?? 0;
   const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
   const deps = n("dependencies");
-  return `${plural(n("packages"), "package")}: ${deps} ${deps === 1 ? "dependency" : "dependencies"}, ${plural(n("devDependencies"), "devDependency")}, ${n("review")} for review`;
+  return `${plural(n("packages"), "package")}: ${deps} ${deps === 1 ? "dependency" : "dependencies"}, ${n("devDependencies")} ${n("devDependencies") === 1 ? "devDependency" : "devDependencies"}, ${n("review")} for review`;
 }
 
 interface RunOutcome {

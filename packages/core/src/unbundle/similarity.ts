@@ -89,7 +89,7 @@ export function statementsOf(code: string): string[] {
 }
 
 export interface Similarity {
-  /** Share of the source's top-level statements found in the output, 0 to 1, 4 decimals. */
+  /** Share of the source's top-level statements found in the output (closest match, partial credit), 0 to 1. */
   score: number;
   statements: number;
   found: number;
@@ -106,31 +106,32 @@ export function similarity(
   sources: { file: string; code: string }[],
   outputs: { file: string; code: string }[],
 ): Similarity {
-  const outputStatements = outputs.map((o) => {
-    const counts = new Map<string, number>();
-    for (const s of statementsOf(o.code)) counts.set(s, (counts.get(s) ?? 0) + 1);
-    return { file: o.file, counts };
-  });
+  const outputStatements = outputs.map((o) => ({
+    file: o.file,
+    statements: statementsOf(o.code).map(bigrams),
+  }));
   const files: Similarity["files"] = [];
   for (const source of sources) {
-    const statements = statementsOf(source.code);
+    const statements = statementsOf(source.code).map(bigrams);
     let best: { module: string | null; found: number } = { module: null, found: 0 };
     for (const o of outputStatements) {
-      const left = new Map(o.counts);
+      // Each source statement scores its closest output statement: 1 when equal, a share of
+      // shared structure when a minifier merged or rewrote it, 0 when nothing resembles it.
       let found = 0;
       for (const s of statements) {
-        const n = left.get(s) ?? 0;
-        if (n > 0) {
-          found++;
-          left.set(s, n - 1);
+        let closest = 0;
+        for (const c of o.statements) {
+          closest = Math.max(closest, dice(s, c));
+          if (closest === 1) break;
         }
+        found += closest;
       }
       if (found > best.found) best = { module: o.file, found };
     }
     files.push({
       file: source.file,
       statements: statements.length,
-      found: best.found,
+      found: Math.round(best.found * 100) / 100,
       module: best.module,
     });
   }
@@ -142,4 +143,27 @@ export function similarity(
     found,
     files,
   };
+}
+
+/** Pairs of adjacent tokens of a canonical statement, counted. */
+function bigrams(canonicalStatement: string): Map<string, number> {
+  const tokens = canonicalStatement.match(/[A-Za-z_][\w]*|\$\d+|-?\d+(?:\.\d+)?|"[^"]*"/g) ?? [];
+  const out = new Map<string, number>();
+  for (let i = 0; i + 1 < tokens.length; i++) {
+    const key = `${tokens[i]} ${tokens[i + 1]}`;
+    out.set(key, (out.get(key) ?? 0) + 1);
+  }
+  return out;
+}
+
+/** Dice coefficient of two bigram multisets, 0 to 1. */
+function dice(a: Map<string, number>, b: Map<string, number>): number {
+  let shared = 0;
+  let sizeA = 0;
+  let sizeB = 0;
+  for (const n of a.values()) sizeA += n;
+  for (const n of b.values()) sizeB += n;
+  if (sizeA + sizeB === 0) return 1;
+  for (const [k, n] of a) shared += Math.min(n, b.get(k) ?? 0);
+  return (2 * shared) / (sizeA + sizeB);
 }

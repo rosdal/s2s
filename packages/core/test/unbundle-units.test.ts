@@ -402,7 +402,14 @@ describe("similarity", () => {
       { file: "o1.js", code: "var q = 1;" },
       { file: "o2.js", code: "function z(y) { return y * q }" },
     ]);
-    expect(apart.score).toBe(0.5);
+    // The split-off statement only gets partial credit from its nearest look-alike.
+    expect(apart.score).toBeGreaterThanOrEqual(0.5);
+    expect(apart.score).toBeLessThan(together.score);
+    const rewritten = similarity(sources, [
+      { file: "o.js", code: "var q = 1; function z(y) { return q * y }" },
+    ]);
+    expect(rewritten.score).toBeGreaterThan(0.5);
+    expect(rewritten.score).toBeLessThan(1);
   });
 });
 

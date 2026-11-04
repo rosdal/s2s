@@ -97,15 +97,33 @@ export function bannerName(raw: string): string | undefined {
 }
 
 /**
+ * A block comment without its `/*!` opening star run and its closing one, cut by scanning: a
+ * regex for the closing run backtracks quadratically on a long row of stars.
+ */
+function stripCommentMarkers(comment: string): string {
+  let from = 0;
+  let to = comment.length;
+  if (comment.startsWith("/*")) {
+    from = 2;
+    while (comment[from] === "*") from++;
+    if (comment[from] === "!") from++;
+  }
+  if (to - from >= 2 && comment.endsWith("*/")) {
+    to -= 2;
+    while (to > from && comment[to - 1] === "*") to--;
+  }
+  return comment.slice(from, to);
+}
+
+/**
  * Read package names and versions from one banner comment. Handles `name vX.Y.Z`,
  * `name@X.Y.Z`, `@license name X.Y.Z` and React's `name.production.min.js` file lines. Each
  * package is reported once, with a version when any shape gave one.
  */
 export function parseBanner(comment: string): BannerHit[] {
-  const body = comment
-    .replace(/^\/\*+!?|\*+\/$/g, "")
+  const body = stripCommentMarkers(comment)
     .replace(/^\/\/!?/gm, "")
-    .replace(/^\s*\*+ ?/gm, " ");
+    .replace(/^[ \t]*\*+ ?/gm, " ");
   const hits = new Map<string, BannerHit>();
   const add = (raw: string | undefined, version: string | null, shape: BannerShape) => {
     const name = raw ? bannerName(raw) : undefined;

@@ -79,6 +79,18 @@ describe("parseBanner", () => {
     );
   });
 
+  test("comment markers come off in linear time, whatever the run of stars", () => {
+    expect(parseBanner("/*! lodash v4.17.21 */")).toContainEqual({
+      name: "lodash",
+      version: "4.17.21",
+      shape: "name-version",
+    });
+    const started = Date.now();
+    parseBanner(`/*${"*".repeat(100_000)}x`);
+    parseBanner(`/*${"*".repeat(100_000)}*/`);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
   test("a React build file inside a folder belongs to the folder's package", () => {
     for (const file of [
       "use-sync-external-store-shim/with-selector.production.js",

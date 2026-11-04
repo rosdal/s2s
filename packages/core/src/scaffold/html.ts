@@ -35,7 +35,7 @@ export function buildIndexHtml(input: {
   };
 
   let html = input.html.replace(
-    /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi,
+    /<script\b([^>]*)>([\s\S]*?)<\/script\b[^>]*>/gi,
     (whole, attrs: string, body: string) => {
       const src = attr(attrs, "src");
       const type = (attr(attrs, "type") ?? "").toLowerCase();

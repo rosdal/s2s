@@ -100,7 +100,7 @@ describe("s2s capture", () => {
     expect(text).toMatch(/^\s+load\s+desktop index\s+requests \d+/m);
     expect(text).toMatch(/^\s+interact\s+desktop index/m);
     expect(text).toMatch(
-      /Capture complete: requests \d+ · stored .+ · chunks discovered \d+ · maps \d+/,
+      /^✓ capture\s+\d+ requests? · .+ · desktop · \d+ maps? found {2}\d+\.\ds$/m,
     );
   });
 
@@ -144,7 +144,7 @@ describe("s2s maps", () => {
     const first = io();
     expect(await runCli(["maps", out], "0.0.0", first.cliIO)).toBe(0);
     expect(first.err.join("\n")).toMatch(
-      /Maps complete: 0 maps, 0 sources recovered, 0% of first-party JS covered/,
+      /✓ maps\s+0 maps, 0 sources recovered, 0% of first-party JS covered/,
     );
     const manifest = JSON.parse(await readFile(path.join(out, "manifest.json"), "utf8"));
     expect(manifest.stages.maps.status).toBe("complete");
@@ -187,7 +187,7 @@ describe("s2s detect", () => {
     expect(await runCli(["maps", out], "0.0.0", io().cliIO)).toBe(0);
     const first = io();
     expect(await runCli(["detect", out, "--offline"], "0.0.0", first.cliIO)).toBe(0);
-    expect(first.err.join("\n")).toMatch(/Detect complete: 0 packages: 0 dependencies/);
+    expect(first.err.join("\n")).toMatch(/✓ detect\s+0 packages: 0 dependencies/);
     expect(first.out).toEqual(["No packages found."]);
     const pkg = JSON.parse(await readFile(path.join(out, "project", "package.json"), "utf8"));
     expect(pkg).toMatchObject({ name: "127-0-0-1", private: true, dependencies: {} });
@@ -252,7 +252,7 @@ describe("s2s unbundle", () => {
     const first = io();
     expect(await runCli(["unbundle", out], "0.0.0", first.cliIO)).toBe(0);
     expect(first.err.join("\n")).toMatch(
-      /Unbundle complete: \w+ · \d+ modules?(?: \(\d+ from source maps, \d+ split\))? · \d+% vendor dropped · \d+ groups?/,
+      /✓ unbundle\s+\w+ · \d+ modules?(?: \(\d+ from source maps, \d+ split\))? · \d+% vendor dropped · \d+ groups?/,
     );
     const modules = JSON.parse(await readFile(path.join(out, "analysis", "modules.json"), "utf8"));
     expect(modules.modules.length).toBeGreaterThan(0);
@@ -297,7 +297,7 @@ describe("s2s grab", () => {
     const out = path.join(tmp, "grab");
     // Ctrl+C as soon as unbundle starts, the way a killed run leaves it.
     const killed = io((line, interrupt) => {
-      if (line.startsWith("Unbundling")) interrupt();
+      if (line.trim().startsWith("Unbundling")) interrupt();
     });
     expect(await runCli(["grab", server.url, "--out", out, ...QUICK], "0.0.0", killed.cliIO)).toBe(
       130,
@@ -311,11 +311,12 @@ describe("s2s grab", () => {
       0,
     );
     const text = resumed.err.join("\n");
-    expect(text).toContain("Nothing to do: capture is already complete");
-    expect(text).toContain("Nothing to do: maps is already complete");
-    expect(text).toContain("Nothing to do: detect is already complete");
-    expect(text).toMatch(/Unbundle complete/);
-    expect(text).toMatch(/Scaffold complete: vanilla/);
+    expect(text).toMatch(/^– capture\s+already complete/m);
+    expect(text).toMatch(/^– maps\s+already complete/m);
+    expect(text).toMatch(/^– detect\s+already complete/m);
+    expect(text).toMatch(/^✓ unbundle/m);
+    expect(text).toMatch(/^✓ scaffold\s+vanilla/m);
+    expect(text).toContain("Reconstruction ready");
     expect(text).toContain(`claude "$(cat PROMPT.md)"`);
     const manifest = JSON.parse(await readFile(path.join(out, "manifest.json"), "utf8"));
     expect(manifest.stages.scaffold.status).toBe("complete");

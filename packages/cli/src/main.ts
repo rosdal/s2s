@@ -8,6 +8,7 @@ import { mapsCommand } from "./commands/maps.js";
 import { scaffoldCommand } from "./commands/scaffold.js";
 import { unbundleCommand } from "./commands/unbundle.js";
 import { verifyCommand } from "./commands/verify.js";
+import { colorDepth } from "./ui.js";
 
 export type { CliIO };
 
@@ -19,6 +20,10 @@ export const defaultIO: CliIO = {
     return () => process.off("SIGINT", handler);
   },
   interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+  write: (chunk) => process.stderr.write(chunk),
+  live: Boolean(process.stderr.isTTY) && !process.env.CI && process.env.TERM !== "dumb",
+  columns: process.stderr.columns,
+  colors: colorDepth(process.stderr),
 };
 
 /** Run the CLI with the given arguments and return the process exit code. */

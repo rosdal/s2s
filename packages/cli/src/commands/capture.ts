@@ -8,10 +8,24 @@ import {
   type ViewportName,
 } from "@rosdal/s2s-core";
 import { defineCommand, type ParsedArgs } from "citty";
+import {
+  type ColorDepth,
+  formatBytes,
+  ownStage,
+  plural,
+  type StageReporter,
+  surfaceOf,
+} from "../ui.js";
 
 export interface CliIO {
   stdout: (line: string) => void;
   stderr: (line: string) => void;
+  /** Raw stderr writes, for redrawing progress in place. */
+  write?: (chunk: string) => void;
+  /** Redraw progress in place (a terminal, not CI or a pipe). */
+  live?: boolean;
+  columns?: number;
+  colors?: ColorDepth;
   /** Install a Ctrl+C handler; returns a function that removes it. */
   onInterrupt: (handler: () => void) => () => void;
   /** A terminal a person can answer prompts in; `s2s` alone then starts the guided flow. */
@@ -53,10 +67,9 @@ async function pagesFile(file: string): Promise<string[]> {
     .filter((line) => line !== "" && !line.startsWith("#"));
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+/** "capture is already complete" reads as "already complete" next to the stage's name. */
+export function skipReason(reason: string): string {
+  return reason.replace(/^\w+ is /, "");
 }
 
 export const captureArgs = {
@@ -127,16 +140,30 @@ export function captureCommand(io: CliIO, version: string, setExitCode: (code: n
 }
 
 /** The stage as a function of its parsed flags, for `s2s grab` to run in sequence. */
-export function captureRunner(io: CliIO, version: string) {
+export function captureRunner(io: CliIO, version: string, shared?: StageReporter) {
   return runCapture;
 
   async function runCapture(args: ParsedArgs<typeof captureArgs>): Promise<number> {
+    const own = shared || args.json ? undefined : ownStage(io, "capture");
+    const stage = shared ?? own?.stage;
+    try {
+      return await captureStage(args, stage);
+    } finally {
+      own?.close();
+    }
+  }
+
+  async function captureStage(
+    args: ParsedArgs<typeof captureArgs>,
+    stage: StageReporter | undefined,
+  ): Promise<number> {
+    const t = surfaceOf(io).theme;
     const controller = new AbortController();
     let interrupts = 0;
     const removeHandler = io.onInterrupt(() => {
       interrupts++;
       if (interrupts === 1) {
-        io.stderr("Stopping: saving what was captured so far (Ctrl+C again to quit at once)…");
+        stage?.note("Stopping: saving what was captured so far (Ctrl+C again to quit at once)…");
         controller.abort(new Error("Interrupted"));
       } else {
         process.exit(130);
@@ -144,13 +171,15 @@ export function captureRunner(io: CliIO, version: string) {
     });
 
     let lastStats = { requests: 0, bytesStored: 0, chunksDiscovered: 0, mapsFound: 0 };
+    let ended = false;
     const statsLine = () =>
       `requests ${lastStats.requests} · stored ${formatBytes(lastStats.bytesStored)} · chunks discovered ${lastStats.chunksDiscovered} · maps ${lastStats.mapsFound}`;
-    // A phase line is printed when the phase ends, so its numbers are what that phase fetched; a
-    // warning flushes it early so the line still comes before what happened during it.
+    // Off a terminal, a phase's line is printed when the phase ends, so its numbers are what that
+    // phase fetched; a warning flushes it early so the line still comes before what happened.
     let pending: string | null = null;
+    let live = "";
     const flush = () => {
-      if (pending !== null) io.stderr(`${pending} ${statsLine()}`);
+      if (pending !== null) stage?.detail(live, `${pending} ${statsLine()}`);
       pending = null;
     };
     const onProgress = (event: CaptureProgress) => {
@@ -158,32 +187,49 @@ export function captureRunner(io: CliIO, version: string) {
         lastStats = event;
         return;
       }
-      if (args.json) return;
+      if (!stage) return;
       if (event.kind !== "phase") flush();
       switch (event.kind) {
         case "start":
-          io.stderr(`Capturing ${event.url}\n  into ${event.workspace}`);
+          stage.detail(`opening ${event.url}`, `Capturing ${event.url}\n  into ${event.workspace}`);
           break;
         case "skip":
-          io.stderr(
-            `Nothing to do: ${event.reason} in ${event.workspace}. Use --force to recapture.`,
-          );
+          ended = true;
+          stage.skipped(`${skipReason(event.reason)} · --force recaptures`);
           break;
         case "phase": {
           const where = [event.viewport, event.page].filter(Boolean).join(" ");
-          flush();
-          pending = `  ${event.phase.padEnd(8)} ${where.padEnd(28)}`;
+          const finished = pending === null ? null : `${pending} ${statsLine()}`;
+          live = `${event.phase} ${t.dim("·")} ${where} ${t.dim(`· ${plural(lastStats.requests, "request")} · ${formatBytes(lastStats.bytesStored)}`)}`;
+          stage.detail(live, finished);
+          pending = `${event.phase.padEnd(8)} ${where.padEnd(28)}`;
           break;
         }
         case "warning":
-          io.stderr(`  warning: ${event.message}`);
+          stage.warn(event.message);
           break;
-        case "done":
-          io.stderr(`Capture ${event.status}: ${statsLine()}`);
+        case "done": {
+          if (event.status !== "complete") break;
+          ended = true;
+          const views = args.viewports
+            .split(",")
+            .map((v) => v.trim())
+            .filter(Boolean)
+            .join(", ");
+          stage.done(
+            [
+              plural(lastStats.requests, "request"),
+              formatBytes(lastStats.bytesStored),
+              views,
+              `${plural(lastStats.mapsFound, "map")} found`,
+            ].join(" · "),
+          );
           break;
+        }
       }
     };
 
+    if (args["ignore-robots"]) stage?.warn("robots.txt is ignored for this capture");
     try {
       const pages = args.pages ? await pagesFile(args.pages) : undefined;
       const result = await capture({
@@ -206,14 +252,13 @@ export function captureRunner(io: CliIO, version: string) {
         signal: controller.signal,
         onProgress,
       });
-      if (args["ignore-robots"] && !args.json) {
-        io.stderr("  note: robots.txt was ignored for this capture.");
-      }
       if (args.json) io.stdout(JSON.stringify(result, null, 2));
-      else if (result.status === "partial") {
-        io.stderr(
-          `Capture stopped early and is marked partial. Run the same command again to restart it.`,
-        );
+      else if (!ended && result.status === "partial") {
+        stage?.failed("stopped early; the capture is marked partial", [
+          "Run the same command again to restart it.",
+        ]);
+      } else if (!ended && result.status !== "complete") {
+        stage?.failed("capture failed");
       }
       if (result.status === "complete") return 0;
       return result.status === "partial" ? 130 : 1;
@@ -223,7 +268,9 @@ export function captureRunner(io: CliIO, version: string) {
         error instanceof RobotsDisallowedError ||
         error instanceof BrowserNotFoundError
       ) {
-        io.stderr(error.message);
+        const [first = "", ...rest] = error.message.split("\n");
+        if (stage) stage.failed(first, rest);
+        else io.stderr(error.message);
         return 1;
       }
       throw error;

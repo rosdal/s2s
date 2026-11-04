@@ -6,6 +6,7 @@ import {
   WorkspaceError,
 } from "@rosdal/s2s-core";
 import { defineCommand, type ParsedArgs } from "citty";
+import { ownStage, type StageReporter } from "../ui.js";
 import type { CliIO } from "./capture.js";
 
 export const scaffoldArgs = {
@@ -54,33 +55,30 @@ export function scaffoldCommand(io: CliIO, setExitCode: (code: number) => void) 
 }
 
 /** The stage as a function of its parsed flags, for `s2s grab` to run in sequence. */
-export function scaffoldRunner(io: CliIO) {
+export function scaffoldRunner(io: CliIO, shared?: StageReporter) {
   return async function runScaffold(args: ParsedArgs<typeof scaffoldArgs>): Promise<number> {
     if (args.target && !(TARGETS as readonly string[]).includes(args.target)) {
       io.stderr(`--target must be one of ${TARGETS.join(", ")}; got "${args.target}".`);
       return 2;
     }
+    const own = shared || args.json ? undefined : ownStage(io, "scaffold");
+    const stage = shared ?? own?.stage;
     const controller = new AbortController();
     const removeHandler = io.onInterrupt(() => controller.abort(new Error("Interrupted")));
     const onProgress = (event: ScaffoldProgress) => {
-      if (args.json) return;
+      if (!stage) return;
       switch (event.kind) {
         case "start":
-          io.stderr(`Scaffolding ${event.workspace}`);
-          break;
-        case "skip":
-          io.stderr(
-            `Nothing to do: ${event.reason} in ${event.workspace}. Use --force to redo it.`,
-          );
+          stage.detail("writing the project", `Scaffolding ${event.workspace}`);
           break;
         case "step":
-          io.stderr(`  ${event.step}`);
+          stage.detail(event.step);
           break;
         case "warning":
-          io.stderr(`  warning: ${event.message}`);
+          stage.warn(event.message);
           break;
         case "done":
-          io.stderr(`Scaffold ${event.status}: ${event.summary}`);
+          if (event.status === "complete") stage.done(event.summary);
           break;
       }
     };
@@ -96,19 +94,25 @@ export function scaffoldRunner(io: CliIO) {
         onProgress,
       });
       if (args.json) io.stdout(JSON.stringify(result, null, 2));
-      else if (result.skipped) io.stderr(result.summary);
-      else if (result.error) io.stderr(`  error: ${result.error}`);
-      if (!args.json && result.buildOutput) io.stderr(result.buildOutput);
+      else if (result.skipped) stage?.skipped(`already complete · ${result.summary}`);
+      else if (result.status === "partial") stage?.failed("interrupted");
+      else if (result.status !== "complete") stage?.failed(result.error ?? "scaffold failed");
+      if (!args.json && !shared && result.buildOutput) {
+        stage?.note("The build failed. Its first lines:");
+        for (const line of result.buildOutput.split("\n").slice(0, 20)) stage?.note(`  ${line}`);
+      }
       if (result.status === "complete") return 0;
       return result.status === "partial" ? 130 : 1;
     } catch (error) {
       if (error instanceof WorkspaceError) {
-        io.stderr(error.message);
+        if (stage) stage.failed(error.message);
+        else io.stderr(error.message);
         return 1;
       }
       throw error;
     } finally {
       removeHandler();
+      own?.close();
     }
   };
 }

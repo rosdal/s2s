@@ -5,3 +5,6 @@ allowBuilds:
   esbuild: true
   # Pulled in by sass (css-preprocessor fixture) for watch mode only; its native build is not needed.
   "@parcel/watcher": false
+  # webcrack's default deobfuscation sandbox. s2s passes webcrack its own sandbox (a locked-down
+  # child process), so the native addon is never loaded and need not be compiled.
+  isolated-vm: false

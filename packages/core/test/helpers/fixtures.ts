@@ -25,7 +25,14 @@ export type FixtureName =
   | "vite-banners"
   | "version-strings"
   | "vue-app"
-  | "hostile-banner";
+  | "hostile-banner"
+  | "vite-react-mapped"
+  | "esbuild-app"
+  | "babel-legacy"
+  | "css-modules"
+  | "assets"
+  | "obfuscated"
+  | "browserify-legacy";
 
 /** Folder each fixture is served from; fixtures with a build step serve their build output. */
 export const FIXTURE_ROOTS: Record<FixtureName, string> = {
@@ -47,6 +54,13 @@ export const FIXTURE_ROOTS: Record<FixtureName, string> = {
   "version-strings": "version-strings/dist",
   "vue-app": "vue-app/dist",
   "hostile-banner": "hostile-banner",
+  "vite-react-mapped": "vite-react-mapped/dist",
+  "esbuild-app": "esbuild-app/dist",
+  "babel-legacy": "babel-legacy/dist",
+  "css-modules": "css-modules/dist",
+  assets: "assets/dist",
+  obfuscated: "obfuscated/dist",
+  "browserify-legacy": "browserify-legacy/dist",
 };
 
 export const BUILT_FIXTURES = [
@@ -63,6 +77,13 @@ export const BUILT_FIXTURES = [
   "vite-banners",
   "version-strings",
   "vue-app",
+  "vite-react-mapped",
+  "esbuild-app",
+  "babel-legacy",
+  "css-modules",
+  "assets",
+  "obfuscated",
+  "browserify-legacy",
 ] as const;
 
 const TYPES: Record<string, string> = {
@@ -73,6 +94,7 @@ const TYPES: Record<string, string> = {
   ".json": "application/json",
   ".map": "application/json",
   ".svg": "image/svg+xml",
+  ".png": "image/png",
   ".txt": "text/plain; charset=utf-8",
   ".woff2": "font/woff2",
 };

@@ -500,14 +500,14 @@ export async function vendorRanges(input: RangeInput): Promise<BundleRanges[]> {
   return out;
 }
 
-function indexer(text: string): (byteOffset: number) => number {
+export function indexer(text: string): (byteOffset: number) => number {
   if (Buffer.byteLength(text) === text.length) return (b) => b;
   const buffer = Buffer.from(text);
   return (b) => buffer.subarray(0, b).toString("utf8").length;
 }
 
 /** Loads the source map (saved or inline) of one captured body on demand. */
-async function mapLoader(
+export async function mapLoader(
   ctx: DetectContext,
 ): Promise<(asset: DetectContext["assets"][number]) => Promise<LogicalMap | undefined>> {
   const entries = (await ctx.readJson<MapEntry[]>(path.join(ctx.paths.maps, "index.json"))) ?? [];

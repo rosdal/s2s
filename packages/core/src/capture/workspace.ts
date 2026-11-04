@@ -61,6 +61,16 @@ export interface WorkspacePaths {
   projectHints: string;
   evidence: string;
   sourcemapPackages: string;
+  /** Stage 4: one file per first-party module, plus `styles/`. */
+  unbundled: string;
+  /** Images, fonts and media copied from the capture under readable names. */
+  assets: string;
+  bundlerReport: string;
+  stylingReport: string;
+  modules: string;
+  unbundleReport: string;
+  project: string;
+  packageJson: string;
 }
 
 export function workspacePaths(root: string): WorkspacePaths {
@@ -91,5 +101,13 @@ export function workspacePaths(root: string): WorkspacePaths {
     projectHints: path.join(analysis, "project-hints.json"),
     evidence,
     sourcemapPackages: path.join(evidence, "sourcemap-packages.json"),
+    unbundled: path.join(recovered, "unbundled"),
+    assets: path.join(abs, "assets"),
+    bundlerReport: path.join(analysis, "bundler.json"),
+    stylingReport: path.join(analysis, "styling.json"),
+    modules: path.join(analysis, "modules.json"),
+    unbundleReport: path.join(analysis, "unbundle-report.json"),
+    project: path.join(abs, "project"),
+    packageJson: path.join(abs, "project", "package.json"),
   };
 }

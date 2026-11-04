@@ -20,10 +20,14 @@
     "@babel/traverse": "^8.0.10",
     "@babel/types": "^8.0.10",
     "@jridgewell/trace-mapping": "^0.3.31",
+    "@wakaru/unminify": "0.2.2",
     "p-limit": "^7.3.3",
     "playwright-core": "^1.64.1",
+    "postcss": "8.5.32",
+    "prettier": "3.9.10",
     "robots-parser": "^3.0.1",
     "tldts": "^7.4.19",
+    "webcrack": "2.16.0",
     "zod": "^4.6.7"
   }
 }

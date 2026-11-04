@@ -1,0 +1,11 @@
+{
+  "name": "@s2s-fixtures/assets",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build"
+  },
+  "devDependencies": {
+    "vite": "^8.3.5"
+  }
+}

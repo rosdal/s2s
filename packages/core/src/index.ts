@@ -43,3 +43,13 @@ export {
   summaryLine,
   WorkspaceError,
 } from "./maps/run.js";
+export { defaultAdapter, type LibraryAdapter } from "./unbundle/adapter.js";
+export { PASSES, type PassName } from "./unbundle/passes.js";
+export {
+  DEFAULT_MAX_GROUP_KB,
+  summaryLine as unbundleSummaryLine,
+  type UnbundleOptions,
+  type UnbundleProgress,
+  type UnbundleResult,
+  unbundle,
+} from "./unbundle/run.js";

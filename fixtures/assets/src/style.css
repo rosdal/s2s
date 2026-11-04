@@ -1,0 +1,14 @@
+@font-face {
+  font-family: "Fixture Sans";
+  src: url("./fonts/fixture-sans.woff2") format("woff2");
+}
+
+.title {
+  font-family: "Fixture Sans", sans-serif;
+}
+
+.banner {
+  width: 32px;
+  height: 32px;
+  background-image: url("./img/banner.png");
+}

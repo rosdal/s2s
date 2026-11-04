@@ -231,3 +231,52 @@ describe("s2s detect", () => {
     expect(out.join("\n")).toContain("--explain");
   });
 });
+
+describe("s2s unbundle", () => {
+  test("unbundles the static fixture, skips a complete stage, rebuilds with --force", async () => {
+    const out = path.join(tmp, "unbundle");
+    expect(await runCli(["capture", server.url, "--out", out, ...FAST], "0.0.0", io().cliIO)).toBe(
+      0,
+    );
+    expect(await runCli(["maps", out], "0.0.0", io().cliIO)).toBe(0);
+    expect(await runCli(["detect", out, "--offline"], "0.0.0", io().cliIO)).toBe(0);
+    const first = io();
+    expect(await runCli(["unbundle", out], "0.0.0", first.cliIO)).toBe(0);
+    expect(first.err.join("\n")).toMatch(
+      /Unbundle complete: \w+ · \d+ modules? · \d+% vendor dropped · \d+ groups?/,
+    );
+    const modules = JSON.parse(await readFile(path.join(out, "analysis", "modules.json"), "utf8"));
+    expect(modules.modules.length).toBeGreaterThan(0);
+
+    const again = io();
+    expect(await runCli(["unbundle", out, "--json"], "0.0.0", again.cliIO)).toBe(0);
+    expect(JSON.parse(again.out.join("\n"))).toMatchObject({ skipped: true, status: "complete" });
+
+    const forced = io();
+    expect(await runCli(["unbundle", out, "--force", "--json"], "0.0.0", forced.cliIO)).toBe(0);
+    expect(JSON.parse(forced.out.join("\n"))).toMatchObject({ skipped: false, status: "complete" });
+  });
+
+  test("bad flag values are usage errors", async () => {
+    for (const args of [
+      ["--skip", "minify"],
+      ["--max-group-kb", "-3"],
+    ]) {
+      const { cliIO, err } = io();
+      expect(await runCli(["unbundle", tmp, ...args], "0.0.0", cliIO)).toBe(2);
+      expect(err.join("\n")).toContain(args[0]);
+    }
+  });
+
+  test("a folder that is not a workspace fails with a hint", async () => {
+    const { cliIO, err } = io();
+    expect(await runCli(["unbundle", path.join(tmp, "missing")], "0.0.0", cliIO)).toBe(1);
+    expect(err.join("\n")).toContain("s2s capture");
+  });
+
+  test("--help shows the unbundle usage", async () => {
+    const { cliIO, out } = io();
+    expect(await runCli(["unbundle", "--help"], "0.0.0", cliIO)).toBe(0);
+    expect(out.join("\n")).toContain("--keep-vendor");
+  });
+});

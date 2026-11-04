@@ -1,0 +1,10 @@
+{
+  "babel-legacy": 0.694,
+  "browserify-legacy": 0.746,
+  "css-modules": 0.685,
+  "esbuild-app": 0.88,
+  "obfuscated": 0.9725,
+  "vite-react": 0.7525,
+  "vite-react-mapped": 0.7838,
+  "webpack-react": 0.644
+}

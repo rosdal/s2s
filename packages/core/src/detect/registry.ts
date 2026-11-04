@@ -7,8 +7,8 @@ import { writeJsonAtomic } from "../fs-util.js";
 export interface PackageInfo {
   name: string;
   latest: string | null;
-  /** Each published version, with the names of its runtime dependencies. */
-  versions: Record<string, { dependencies: string[] }>;
+  /** Each published version, with the names of its runtime dependencies and its peer ranges. */
+  versions: Record<string, { dependencies: string[]; peers?: Record<string, string> }>;
   /** Publish time per version (ISO). */
   time: Record<string, string>;
 }
@@ -57,12 +57,19 @@ export function trimPackument(body: unknown): PackageInfo {
   const doc = (body ?? {}) as {
     name?: string;
     "dist-tags"?: Record<string, string>;
-    versions?: Record<string, { dependencies?: Record<string, string> }>;
+    versions?: Record<
+      string,
+      { dependencies?: Record<string, string>; peerDependencies?: Record<string, string> }
+    >;
     time?: Record<string, string>;
   };
   const versions: PackageInfo["versions"] = {};
   for (const [version, meta] of Object.entries(doc.versions ?? {})) {
-    versions[version] = { dependencies: Object.keys(meta?.dependencies ?? {}).sort() };
+    const peers = meta?.peerDependencies;
+    versions[version] = {
+      dependencies: Object.keys(meta?.dependencies ?? {}).sort(),
+      ...(peers && Object.keys(peers).length > 0 ? { peers } : {}),
+    };
   }
   const time: Record<string, string> = {};
   for (const [version, at] of Object.entries(doc.time ?? {})) {
@@ -105,7 +112,8 @@ export class Registry {
 
   /** Metadata for a package, or `null` when the registry has no such package. */
   packageInfo(name: string): Promise<PackageInfo | null> {
-    return this.#cached(`${encodeName(name)}.json`, async () => {
+    // `.v2`: entries cached before peer ranges were kept would hide them for a day.
+    return this.#cached(`${encodeName(name)}.v2.json`, async () => {
       const body = await this.#get(`${this.#registryUrl}/${encodeName(name)}`);
       return body === null ? null : trimPackument(body);
     });

@@ -409,7 +409,7 @@ describe("registry", () => {
     expect(await second.packageInfo("missing")).toBeNull();
     expect(second.requests).toBe(0);
     expect(calls).toHaveLength(4);
-    const cached = JSON.parse(await readFile(path.join(cacheDir, "lib.json"), "utf8"));
+    const cached = JSON.parse(await readFile(path.join(cacheDir, "lib.v2.json"), "utf8"));
     expect(cached.value.name).toBe("lib");
   });
 });
@@ -462,6 +462,50 @@ describe("checkPackages", () => {
     expect(by.ghost?.registry).toMatchObject({ status: "failed", exists: false });
     expect(by.inner).toMatchObject({ version: "1.0.0", versionSource: "inferred" });
     expect(by.inner?.transitiveOf).toEqual(["real"]);
+  });
+
+  test("an inferred version steps back until its peer ranges accept the detected peers", async () => {
+    const docs: Record<string, unknown> = {
+      lib: {
+        name: "lib",
+        versions: { "2.11.0": {}, "2.20.0": {} },
+        time: { "2.11.0": "2025-01-01T00:00:00Z", "2.20.0": "2025-06-01T00:00:00Z" },
+      },
+      "lib-scope": {
+        name: "lib-scope",
+        versions: {
+          "0.7.2": { peerDependencies: { lib: ">=2.0.0" } },
+          "0.12.2": { peerDependencies: { lib: ">=2.20.0 || >=3.0.0-alpha.0" } },
+        },
+        time: { "0.7.2": "2025-02-01T00:00:00Z", "0.12.2": "2025-07-01T00:00:00Z" },
+      },
+    };
+    const fetchDocs: FetchLike = async (url) => {
+      if (url.includes("downloads")) return Response.json({ downloads: 50_000 });
+      const name = decodeURIComponent(url.split("/").at(-1) ?? "");
+      const doc = docs[name];
+      return doc ? Response.json(doc) : new Response("{}", { status: 404 });
+    };
+    const merged = mergeEvidence([
+      // The bundle pins lib; lib-scope's version is only a guess.
+      ev({ id: "a", package: "lib", version: "2.11.0", signal: "fingerprint", trusted: true }),
+      ev({
+        id: "b",
+        package: "lib-scope",
+        signal: "sourcemap-path",
+        strength: "strong",
+        trusted: true,
+      }),
+    ]);
+    await checkPackages(merged, {
+      registry: new Registry({ cacheDir: path.join(tmp, "peers"), fetch: fetchDocs }),
+      popularityFloor: 1000,
+      cutoffOf: () => new Date("2025-12-01T00:00:00Z"),
+      warn: () => {},
+    });
+    const by = Object.fromEntries(merged.map((p) => [p.name, p]));
+    expect(by.lib?.version).toBe("2.11.0");
+    expect(by["lib-scope"]?.version).toBe("0.7.2");
   });
 
   test("an inferred parent steps back to the release that still depended on a detected orphan", async () => {

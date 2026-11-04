@@ -1,5 +1,23 @@
 # @rosdal/s2s
 
+## 0.2.0
+
+### Minor Changes
+
+- 3e44311: Redesign the terminal output: a live stage list with timings on a terminal, a "Reconstruction ready" summary after `s2s grab`, a framed error that says where a rerun resumes, a results table for `s2s verify`, colored package tables and evidence for `s2s detect`, and a shorter guided prompt. Colors follow NO_COLOR and FORCE_COLOR; CI and pipes get plain lines.
+
+### Patch Changes
+
+- 746ce8a: Monorepo sites like Excalidraw now build untouched: `s2s grab https://excalidraw.com/` produces a scaffold that builds and passes the baseline verify.
+  - Source maps keep their folder depth: a file whose sources climb out of a deeper folder no longer loses that folder, and its real name is read from imports that need it.
+  - The scaffold rebuilds barrel `index.ts` files that compiled to no code, writes empty stand-ins for stylesheets no map held, and aliases the site's own workspace packages (`@excalidraw/element`) to their recovered folders instead of installing them from npm.
+  - Maps rebuild data the bundle inlined without mappings (JSON imports such as locale files, and namespaces of tree-shaken modules) from the binding the importer's map points at, and write captured bytes in place of the placeholder Vite keeps for each asset.
+  - The scaffold points imports of a lazy chunk that came without a map (`./firebaseSDK`) at the unbundler's split parts, and aliases plugin virtual modules (`virtual:pwa-register`) to the code their map kept.
+  - Capture keeps a DOM snapshot per viewport, and verify compares each viewport with its own, so a responsive app's mobile layout no longer fails against the desktop DOM.
+  - Detection adds `sass` when code imports `.scss` files, reads React's `use-sync-external-store-shim/with-selector` banner as one package, and no longer guesses a parent version newer than a dependency the bundle still contains.
+  - Build logs drop colour codes, plain-log capture lines show each phase's own totals, and the unbundle summary counts the same modules the scaffold does.
+- 746ce8a: Add a README to the npm package.
+
 ## 0.1.1
 
 ### Patch Changes

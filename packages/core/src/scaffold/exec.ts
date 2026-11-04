@@ -75,3 +75,20 @@ export function git(args: string[], cwd: string, fallbackIdentity = false): Prom
       : {}),
   });
 }
+
+/** Build-log lines that say nothing about a failure: emitted files, asset notices, progress. */
+const ROUTINE =
+  /^(?:dist\/|\s*$|> |\$ |transforming|rendering chunks|computing gzip|✓ \d+ modules|\[PLUGIN_TIMINGS\]|\s+- plugin |.* referenced in .* didn't resolve at build time)/;
+const ERROR_START =
+  /error|Error|failed|✗|^\[[A-Z_]+\]|memory allocation|Cannot find|Could not|ELIFECYCLE/;
+
+/**
+ * The part of a failed build's output worth showing: from the first line that reports a problem,
+ * without the routine lines around it. A log that names no problem gives its last lines.
+ */
+export function buildFailureExcerpt(output: string, max = 40): string {
+  const lines = output.split("\n").filter((line) => !ROUTINE.test(line));
+  const first = lines.findIndex((line) => ERROR_START.test(line));
+  const picked = first >= 0 ? lines.slice(first, first + max) : lines.slice(-max);
+  return picked.join("\n");
+}

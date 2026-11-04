@@ -10,6 +10,7 @@ import {
   urlDirectory,
 } from "../src/maps/reroot.js";
 import { chunkExports, chunkStem, synthesizeMissing } from "../src/scaffold/barrels.js";
+import { buildFailureExcerpt } from "../src/scaffold/exec.js";
 import { tsconfig, viteConfig } from "../src/scaffold/templates.js";
 import {
   findWorkspacePackages,
@@ -264,6 +265,24 @@ describe("split chunks", () => {
     );
     expect(standIn?.content).toContain('export { Zm as doc } from "../../firebaseSDK/part-2.js";');
   });
+});
+
+test("a failed build's excerpt starts at the failure, not at the files that were written", () => {
+  const output = [
+    "$ vite build",
+    "transforming...",
+    "./A.woff2 referenced in ./A.woff2 didn't resolve at build time, it will remain unchanged",
+    "✓ 1322 modules transformed.",
+    "rendering chunks...",
+    ...Array.from({ length: 80 }, (_, i) => `dist/assets/chunk-${i}.js   1.0 kB`),
+    "memory allocation of 2890008 bytes failed",
+    "[ELIFECYCLE] Command failed with exit code -1073740791.",
+  ].join("\n");
+  expect(buildFailureExcerpt(output).split("\n")).toEqual([
+    "memory allocation of 2890008 bytes failed",
+    "[ELIFECYCLE] Command failed with exit code -1073740791.",
+  ]);
+  expect(buildFailureExcerpt("one\ntwo\nthree", 2)).toBe("two\nthree");
 });
 
 test("an imported .scss file is styling evidence even when no map holds it", () => {

@@ -24,7 +24,7 @@ import {
   slashCommandMd,
 } from "./agent-files.js";
 import { chunkExports, chunkStem, type SplitChunk, synthesizeMissing } from "./barrels.js";
-import { git, runScript } from "./exec.js";
+import { buildFailureExcerpt, git, runScript } from "./exec.js";
 import {
   type AgentFacts,
   DEFAULT_THRESHOLDS,
@@ -676,7 +676,7 @@ async function run(
     build = result.exitCode === 0 ? "passed" : "failed";
     await writeFileAtomic(path.join(paths.analysis, "scaffold-build.log"), result.output);
     if (result.exitCode !== 0) {
-      buildOutput = result.output.split("\n").slice(0, 50).join("\n");
+      buildOutput = buildFailureExcerpt(result.output);
       warn("The untouched scaffold does not build; see analysis/scaffold-build.log.");
     }
   }

@@ -106,7 +106,7 @@ export function verifyRunner(
           stage?.failed(counts);
           break;
         case 2:
-          stage?.failed("Build failed. First 50 lines of output:", buildLines);
+          stage?.failed("Build failed:", buildLines);
           break;
         default:
           stage?.failed(`Verify could not run: ${result.error ?? "unknown error"}`);

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(s2s verify)",
+      "Bash(s2s verify:*)",
+      "Bash(pnpm --dir project run build)",
+      "Bash(pnpm --dir project run typecheck)",
+      "Bash(git status)",
+      "Bash(git status:*)",
+      "Bash(git diff)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git checkout --:*)",
+      "Bash(git restore:*)"
+    ],
+    "deny": [
+      "Bash(s2s verify --update-baseline:*)",
+      "Edit(raw/**)",
+      "Edit(analysis/**)",
+      "Edit(recovered/**)"
+    ]
+  }
+}

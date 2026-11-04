@@ -20,7 +20,7 @@ const SHELL = process.platform === "win32";
 
 /** The installed version of a package manager, or `undefined` when it is not on the PATH. */
 export function localVersion(pm: PackageManager): string | undefined {
-  const result = spawnSync(pm, ["--version"], {
+  const result = spawnSync(SHELL ? `${pm} --version` : pm, SHELL ? [] : ["--version"], {
     encoding: "utf8",
     shell: SHELL,
     timeout: 15_000,
@@ -158,14 +158,19 @@ export async function installProject(
   const { args, env } = installCommand(manager.name, manager.version);
   const chunks: string[] = [];
   const exitCode = await new Promise<number>((resolve) => {
-    const child = spawn(manager.name, args, {
-      cwd: dir,
-      env: { ...process.env, ...env },
-      shell: SHELL,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      ...(signal ? { signal } : {}),
-    });
+    // With a shell, one command string: the arguments are fixed flags without spaces.
+    const child = spawn(
+      SHELL ? [manager.name, ...args].join(" ") : manager.name,
+      SHELL ? [] : args,
+      {
+        cwd: dir,
+        env: { ...process.env, ...env },
+        shell: SHELL,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        ...(signal ? { signal } : {}),
+      },
+    );
     child.stdout.on("data", (d: Buffer) => chunks.push(d.toString()));
     child.stderr.on("data", (d: Buffer) => chunks.push(d.toString()));
     child.on("error", (error) => {

@@ -71,6 +71,21 @@ export interface WorkspacePaths {
   unbundleReport: string;
   project: string;
   packageJson: string;
+  /** Stage 5: recovered modules inside the project, shrinking as the agent works. */
+  projectRecovered: string;
+  agents: string;
+  claude: string;
+  prompt: string;
+  progress: string;
+  config: string;
+  gitignore: string;
+  verify: string;
+  verifyReport: string;
+  verifyReportMd: string;
+  verifyDiffs: string;
+  verifyHistory: string;
+  /** Screenshots accepted with `s2s verify --update-baseline`; they win over the capture's. */
+  verifyBaseline: string;
 }
 
 export function workspacePaths(root: string): WorkspacePaths {
@@ -109,5 +124,18 @@ export function workspacePaths(root: string): WorkspacePaths {
     unbundleReport: path.join(analysis, "unbundle-report.json"),
     project: path.join(abs, "project"),
     packageJson: path.join(abs, "project", "package.json"),
+    projectRecovered: path.join(abs, "project", "src", "_recovered"),
+    agents: path.join(abs, "AGENTS.md"),
+    claude: path.join(abs, "CLAUDE.md"),
+    prompt: path.join(abs, "PROMPT.md"),
+    progress: path.join(abs, "PROGRESS.md"),
+    config: path.join(abs, "s2s.config.ts"),
+    gitignore: path.join(abs, ".gitignore"),
+    verify: path.join(abs, "verify"),
+    verifyReport: path.join(abs, "verify", "report.json"),
+    verifyReportMd: path.join(abs, "verify", "report.md"),
+    verifyDiffs: path.join(abs, "verify", "diffs"),
+    verifyHistory: path.join(abs, "verify", "history.jsonl"),
+    verifyBaseline: path.join(abs, "verify", "baseline"),
   };
 }

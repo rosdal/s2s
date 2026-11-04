@@ -24,6 +24,7 @@ const FAST = {
   version: "0.0.0-test",
   quietMs: 300,
   phaseTimeoutMs: 5_000,
+  maskDelayMs: 0,
   delayMs: 0,
   viewports: ["desktop"],
 } satisfies Partial<CaptureOptions>;

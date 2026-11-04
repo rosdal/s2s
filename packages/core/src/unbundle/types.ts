@@ -51,6 +51,8 @@ export interface ImportLine {
   defaultName?: string;
   /** An `// s2s:` note for the agent, written above the import. */
   note?: string;
+  /** The vendor package's version, when Stage 3 found one. */
+  version?: string | null;
 }
 
 export type Boundary = "real" | "heuristic";

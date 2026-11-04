@@ -32,7 +32,9 @@ export type FixtureName =
   | "css-modules"
   | "assets"
   | "obfuscated"
-  | "browserify-legacy";
+  | "browserify-legacy"
+  | "dynamic"
+  | "api-app";
 
 /** Folder each fixture is served from; fixtures with a build step serve their build output. */
 export const FIXTURE_ROOTS: Record<FixtureName, string> = {
@@ -61,6 +63,8 @@ export const FIXTURE_ROOTS: Record<FixtureName, string> = {
   assets: "assets/dist",
   obfuscated: "obfuscated/dist",
   "browserify-legacy": "browserify-legacy/dist",
+  dynamic: "dynamic",
+  "api-app": "api-app",
 };
 
 export const BUILT_FIXTURES = [
@@ -144,6 +148,12 @@ export async function serveFixture(name: FixtureName): Promise<FixtureServer> {
   const server = createServer((req, res) => {
     if (name === "static" && req.url === "/old.css") {
       res.writeHead(302, { location: "/css/site.css" }).end();
+      return;
+    }
+    if (name === "api-app" && req.url === "/api/items") {
+      res
+        .writeHead(200, { "content-type": "application/json" })
+        .end('[{"name":"Alpha"},{"name":"Beta"},{"name":"Gamma"}]');
       return;
     }
     if (name === "hostile" && req.url?.startsWith("/api/poll")) {

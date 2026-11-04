@@ -43,6 +43,28 @@ export {
   summaryLine,
   WorkspaceError,
 } from "./maps/run.js";
+export {
+  agentsMd,
+  CLAUDE_MD,
+  claudeSettings,
+  progressMd,
+  promptMd,
+} from "./scaffold/agent-files.js";
+export {
+  type AgentFacts,
+  DEFAULT_THRESHOLDS,
+  projectScript,
+  TARGETS,
+  type Target,
+  type Thresholds,
+} from "./scaffold/facts.js";
+export {
+  type ScaffoldOptions,
+  type ScaffoldProgress,
+  type ScaffoldResult,
+  scaffold,
+  summaryLine as scaffoldSummaryLine,
+} from "./scaffold/run.js";
 export { defaultAdapter, type LibraryAdapter } from "./unbundle/adapter.js";
 export { PASSES, type PassName } from "./unbundle/passes.js";
 export {
@@ -53,3 +75,13 @@ export {
   type UnbundleResult,
   unbundle,
 } from "./unbundle/run.js";
+export {
+  type PageCheck,
+  summaryLine as verifySummaryLine,
+  type VerifyExitCode,
+  type VerifyOptions,
+  type VerifyProgress,
+  type VerifyReport,
+  type VerifyResult,
+  verify,
+} from "./verify/run.js";

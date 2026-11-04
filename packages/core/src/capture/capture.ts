@@ -2,6 +2,7 @@ import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright-core";
 import { writeJsonAtomic } from "../fs-util.js";
+import { decodePng, dynamicMask } from "../verify/image.js";
 import { BodyStore } from "./body-store.js";
 import { launchBrowser } from "./browser.js";
 import { collectCdnPackages } from "./cdn.js";
@@ -59,6 +60,11 @@ export interface CaptureOptions {
   maxDiscoveryRounds?: number;
   maxDiscoveryFiles?: number;
   maxBodyBytes?: number;
+  /**
+   * Gap between the two screenshots of each page and viewport; regions that differ become the
+   * dynamic mask `s2s verify` ignores. 0 takes one screenshot and no mask.
+   */
+  maskDelayMs?: number;
   signal?: AbortSignal;
   onProgress?: (event: CaptureProgress) => void;
   headless?: boolean;
@@ -126,6 +132,7 @@ function resolvedOptions(options: CaptureOptions) {
     maxDiscoveryRounds: options.maxDiscoveryRounds ?? 5,
     maxDiscoveryFiles: options.maxDiscoveryFiles ?? 2_000,
     maxBodyBytes: options.maxBodyBytes ?? 50 * 1024 * 1024,
+    maskDelayMs: options.maskDelayMs ?? 3_000,
   };
 }
 
@@ -452,7 +459,7 @@ export async function capture(options: CaptureOptions): Promise<CaptureResult> {
   }
 }
 
-async function buildUserAgents(
+export async function buildUserAgents(
   browser: Browser,
   version: string,
 ): Promise<Record<ViewportName, string>> {
@@ -516,6 +523,12 @@ async function capturePage(input: {
   progress({ kind: "phase", phase: input.phase, viewport, page: slug, url });
   const page: Page = await context.newPage();
   page.on("dialog", (dialog) => void dialog.dismiss().catch(() => {}));
+  // Errors the site logs on its own; verify only fails on errors the capture didn't have.
+  const consoleErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  page.on("pageerror", (error) => consoleErrors.push(error.message));
   try {
     const deadline = Date.now() + opts.phaseTimeoutMs;
     let response: Awaited<ReturnType<Page["goto"]>> = null;
@@ -582,17 +595,30 @@ async function capturePage(input: {
 
     const shotDir = path.join(input.paths.screenshots, slug);
     await mkdir(shotDir, { recursive: true });
-    await page
-      .screenshot({
-        path: path.join(shotDir, `${viewport}.png`),
+    const shoot = () =>
+      page.screenshot({
         fullPage: true,
         animations: "disabled",
         caret: "hide",
         timeout: opts.phaseTimeoutMs,
-      })
-      .catch((error: Error) =>
-        warn(`Screenshot failed for ${url} (${viewport}): ${error.message.split("\n")[0]}`),
+      });
+    try {
+      const first = await shoot();
+      await writeFile(path.join(shotDir, `${viewport}.png`), first);
+      if (opts.maskDelayMs > 0) {
+        // A second screenshot a few seconds later: what changed on its own (a clock, a carousel,
+        // video) becomes the dynamic mask verify ignores.
+        await sleep(opts.maskDelayMs, signal);
+        const second = await shoot();
+        const mask = dynamicMask(decodePng(first), decodePng(second));
+        await writeJsonAtomic(path.join(shotDir, `${viewport}.mask.json`), mask);
+      }
+    } catch (error) {
+      signal?.throwIfAborted();
+      warn(
+        `Screenshot failed for ${url} (${viewport}): ${(error as Error).message.split("\n")[0]}`,
       );
+    }
 
     recorder.tag = { page: slug, viewport, phase: "interact" };
     progress({ kind: "phase", phase: "interact", viewport, page: slug, url });
@@ -603,6 +629,7 @@ async function capturePage(input: {
       ...(signal ? { signal } : {}),
     });
     probe.interactions = report;
+    probe.consoleErrors = consoleErrors;
     return { finalUrl, ssr, dom, links, probe };
   } finally {
     await page.close().catch(() => {});

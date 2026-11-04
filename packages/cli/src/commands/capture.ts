@@ -14,6 +14,8 @@ export interface CliIO {
   stderr: (line: string) => void;
   /** Install a Ctrl+C handler; returns a function that removes it. */
   onInterrupt: (handler: () => void) => () => void;
+  /** A terminal a person can answer prompts in; `s2s` alone then starts the guided flow. */
+  interactive?: boolean;
 }
 
 export class UsageError extends Error {
@@ -101,6 +103,11 @@ export const captureArgs = {
     description: "Max milliseconds to wait for quiet per phase",
     default: "30000",
   },
+  "mask-delay": {
+    type: "string",
+    description: "Milliseconds between the two screenshots that find dynamic regions (0: one shot)",
+    default: "3000",
+  },
   json: { type: "boolean", description: "Print only the result as JSON" },
 } as const;
 
@@ -109,6 +116,7 @@ export const captureArgs = {
  * because citty does not pass a subcommand's return value back up.
  */
 export function captureCommand(io: CliIO, version: string, setExitCode: (code: number) => void) {
+  const runCapture = captureRunner(io, version);
   return defineCommand({
     meta: { name: "capture", description: "Stage 1: capture a live URL into a workspace" },
     args: captureArgs,
@@ -116,6 +124,11 @@ export function captureCommand(io: CliIO, version: string, setExitCode: (code: n
       setExitCode(await runCapture(args));
     },
   });
+}
+
+/** The stage as a function of its parsed flags, for `s2s grab` to run in sequence. */
+export function captureRunner(io: CliIO, version: string) {
+  return runCapture;
 
   async function runCapture(args: ParsedArgs<typeof captureArgs>): Promise<number> {
     const controller = new AbortController();
@@ -180,6 +193,7 @@ export function captureCommand(io: CliIO, version: string, setExitCode: (code: n
         delayMs: int("delay", args.delay) ?? 1000,
         quietMs: int("quiet-ms", args["quiet-ms"], 100) ?? 1000,
         phaseTimeoutMs: int("phase-timeout", args["phase-timeout"], 1000) ?? 30_000,
+        maskDelayMs: int("mask-delay", args["mask-delay"]) ?? 3_000,
         signal: controller.signal,
         onProgress,
       });

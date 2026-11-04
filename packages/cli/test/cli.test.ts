@@ -27,7 +27,16 @@ function io(onLine?: (line: string, interrupt: () => void) => void) {
   return { cliIO, out, err };
 }
 
-const FAST = ["--viewports", "desktop", "--quiet-ms", "300", "--phase-timeout", "5000"];
+const FAST = [
+  "--viewports",
+  "desktop",
+  "--quiet-ms",
+  "300",
+  "--phase-timeout",
+  "5000",
+  "--mask-delay",
+  "0",
+];
 
 let tmp: string;
 let server: FixtureServer;
@@ -278,5 +287,67 @@ describe("s2s unbundle", () => {
     const { cliIO, out } = io();
     expect(await runCli(["unbundle", "--help"], "0.0.0", cliIO)).toBe(0);
     expect(out.join("\n")).toContain("--keep-vendor");
+  });
+});
+
+describe("s2s grab", () => {
+  const QUICK = ["--offline", "--no-install", "--no-build", "--no-verify", ...FAST];
+
+  test("runs every stage, prints the next step, and resumes after a kill", async () => {
+    const out = path.join(tmp, "grab");
+    // Ctrl+C as soon as unbundle starts, the way a killed run leaves it.
+    const killed = io((line, interrupt) => {
+      if (line.startsWith("Unbundling")) interrupt();
+    });
+    expect(await runCli(["grab", server.url, "--out", out, ...QUICK], "0.0.0", killed.cliIO)).toBe(
+      130,
+    );
+    expect(killed.err.join("\n")).toContain("s2s grab stopped at unbundle (exit 130)");
+    const partial = JSON.parse(await readFile(path.join(out, "manifest.json"), "utf8"));
+    expect(partial.stages.unbundle.status).toBe("partial");
+
+    const resumed = io();
+    expect(await runCli(["grab", server.url, "--out", out, ...QUICK], "0.0.0", resumed.cliIO)).toBe(
+      0,
+    );
+    const text = resumed.err.join("\n");
+    expect(text).toContain("Nothing to do: capture is already complete");
+    expect(text).toContain("Nothing to do: maps is already complete");
+    expect(text).toContain("Nothing to do: detect is already complete");
+    expect(text).toMatch(/Unbundle complete/);
+    expect(text).toMatch(/Scaffold complete: vanilla/);
+    expect(text).toContain(`claude "$(cat PROMPT.md)"`);
+    const manifest = JSON.parse(await readFile(path.join(out, "manifest.json"), "utf8"));
+    expect(manifest.stages.scaffold.status).toBe("complete");
+    expect(await readFile(path.join(out, "CLAUDE.md"), "utf8")).toBe("@AGENTS.md\n");
+  });
+
+  test("a bad URL is a usage error", async () => {
+    const { cliIO, err } = io();
+    expect(await runCli(["grab", "ftp://example.com"], "0.0.0", cliIO)).toBe(2);
+    expect(err.join("\n")).toContain("Not an http(s) URL");
+  });
+});
+
+describe("s2s scaffold and verify", () => {
+  test("bad flag values are usage errors", async () => {
+    const { cliIO, err } = io();
+    expect(await runCli(["scaffold", tmp, "--target", "angular"], "0.0.0", cliIO)).toBe(2);
+    expect(err.join("\n")).toContain("--target");
+  });
+
+  test("verify outside a workspace exits 3", async () => {
+    const { cliIO, err } = io();
+    expect(await runCli(["verify", path.join(tmp, "missing")], "0.0.0", cliIO)).toBe(3);
+    expect(err.join("\n")).toContain("Verify could not run");
+  });
+
+  test("the main usage lists the Stage 5 commands", async () => {
+    const { cliIO, out } = io();
+    expect(await runCli(["--help"], "0.0.0", cliIO)).toBe(0);
+    for (const name of ["grab", "scaffold", "verify"]) expect(out.join("\n")).toContain(name);
+    const verifyHelp = io();
+    expect(await runCli(["verify", "--help"], "0.0.0", verifyHelp.cliIO)).toBe(0);
+    expect(verifyHelp.out.join("\n")).toContain("--update-baseline");
   });
 });

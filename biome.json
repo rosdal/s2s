@@ -10,6 +10,7 @@
     "includes": [
       "**",
       "!packages/core/test/samples",
+      "!packages/core/test/__snapshots__",
       "!.changeset/*.md",
       "!fixtures/registry/*.json"
     ]

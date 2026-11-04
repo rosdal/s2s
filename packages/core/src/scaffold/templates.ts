@@ -27,6 +27,13 @@ export function scaffoldPackageJson(pkg: PackageJson, target: Target): PackageJs
   );
   for (const [name, range] of Object.entries(TARGET_DEV_DEPENDENCIES[target]))
     if (!(name in (pkg.dependencies ?? {}))) dev[name] ??= range;
+  // Strict TSX needs React's types; match the major the site runs.
+  if (target === "react") {
+    const major = Number.parseInt((pkg.dependencies?.react ?? "").replace(/^[^\d]*/, ""), 10);
+    const range = Number.isFinite(major) ? "^" + major + ".0.0" : "^19.0.0";
+    dev["@types/react"] ??= range;
+    dev["@types/react-dom"] ??= range;
+  }
   const sorted = (r: Record<string, string>) =>
     Object.fromEntries(Object.entries(r).sort(([a], [b]) => a.localeCompare(b)));
   const { dependencies, devDependencies: _, ...rest } = pkg;

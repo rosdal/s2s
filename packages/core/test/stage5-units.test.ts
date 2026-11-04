@@ -285,6 +285,8 @@ describe("scaffold choices", () => {
     expect(out.devDependencies.vite).toBeDefined();
     expect(out.devDependencies["@vitejs/plugin-react"]).toBeDefined();
     expect(out.scripts.build).toBe("vite build");
+    expect(out.devDependencies["@types/react"]).toBe("^18.0.0");
+    expect(out.devDependencies["@types/react-dom"]).toBe("^18.0.0");
   });
 
   test("main.ts loads the runtime, styles, then modules", () => {

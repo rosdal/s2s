@@ -49,6 +49,7 @@ const CONFIDENCES = ["high", "medium", "low"] as const;
 
 /** Exit codes: 0 complete or skipped, 1 failed (or a failed install), 2 bad flags, 130 interrupted. */
 export function detectCommand(io: CliIO, setExitCode: (code: number) => void) {
+  const runDetect = detectRunner(io);
   return defineCommand({
     meta: {
       name: "detect",
@@ -59,6 +60,11 @@ export function detectCommand(io: CliIO, setExitCode: (code: number) => void) {
       setExitCode(await runDetect(args));
     },
   });
+}
+
+/** The stage as a function of its parsed flags, for `s2s grab` to run in sequence. */
+export function detectRunner(io: CliIO) {
+  return runDetect;
 
   async function runDetect(args: ParsedArgs<typeof detectArgs>): Promise<number> {
     if (args.pm && !(PACKAGE_MANAGERS as readonly string[]).includes(args.pm)) {

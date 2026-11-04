@@ -40,6 +40,7 @@ export const unbundleArgs = {
 
 /** Exit codes: 0 complete or skipped, 1 failed, 2 bad flags, 130 interrupted. */
 export function unbundleCommand(io: CliIO, setExitCode: (code: number) => void) {
+  const runUnbundle = unbundleRunner(io);
   return defineCommand({
     meta: {
       name: "unbundle",
@@ -50,6 +51,11 @@ export function unbundleCommand(io: CliIO, setExitCode: (code: number) => void) 
       setExitCode(await runUnbundle(args));
     },
   });
+}
+
+/** The stage as a function of its parsed flags, for `s2s grab` to run in sequence. */
+export function unbundleRunner(io: CliIO) {
+  return runUnbundle;
 
   async function runUnbundle(args: ParsedArgs<typeof unbundleArgs>): Promise<number> {
     const skip = (args.skip ?? "")

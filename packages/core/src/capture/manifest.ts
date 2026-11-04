@@ -40,6 +40,8 @@ export const Manifest = z.object({
     detect: StageState.default(pendingStage),
     /** Stage 4. Workspaces written before it existed read as `pending`. */
     unbundle: StageState.default(pendingStage),
+    /** Stage 5. Workspaces written before it existed read as `pending`. */
+    scaffold: StageState.default(pendingStage),
   }),
 });
 export type Manifest = z.infer<typeof Manifest>;
@@ -62,6 +64,7 @@ export function newManifest(input: {
       maps: pendingStage(),
       detect: pendingStage(),
       unbundle: pendingStage(),
+      scaffold: pendingStage(),
     },
   };
 }

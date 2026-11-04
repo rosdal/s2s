@@ -15,6 +15,7 @@ export const mapsArgs = {
 
 /** Exit codes: 0 complete or skipped, 1 failed, 130 interrupted. */
 export function mapsCommand(io: CliIO, setExitCode: (code: number) => void) {
+  const runMaps = mapsRunner(io);
   return defineCommand({
     meta: {
       name: "maps",
@@ -25,6 +26,11 @@ export function mapsCommand(io: CliIO, setExitCode: (code: number) => void) {
       setExitCode(await runMaps(args));
     },
   });
+}
+
+/** The stage as a function of its parsed flags, for `s2s grab` to run in sequence. */
+export function mapsRunner(io: CliIO) {
+  return runMaps;
 
   async function runMaps(args: ParsedArgs<typeof mapsArgs>): Promise<number> {
     const controller = new AbortController();

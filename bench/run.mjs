@@ -229,11 +229,13 @@ async function fixtureSpotChecks(index, indexed) {
     for (const file of files)
       bundles.push({ id: file, url: file, text: await readFile(file, "utf8") });
     const result = await matchBundles(bundles, [index]);
-    const installed = new Set(
-      (await readdir(path.join(dir, "node_modules", ".pnpm")).catch(() => [])).map((d) =>
-        d.replace(/@[^@]+$/, "").replace(/\+/g, "/"),
-      ),
-    );
+    // Anything installed for the fixture counts as a right answer, transitive packages too;
+    // pnpm keeps them in the workspace root's store.
+    const store = [
+      ...(await readdir(path.join(dir, "node_modules", ".pnpm")).catch(() => [])),
+      ...(await readdir(path.join(root, "..", "node_modules", ".pnpm")).catch(() => [])),
+    ];
+    const installed = new Set(store.map((d) => d.replace(/@[^@_]+(?:_.*)?$/, "").replace(/\+/g, "/")));
     for (const d of deps) installed.add(d);
     const versionOf = async (dep) => {
       try {

@@ -301,7 +301,7 @@ describe("results", () => {
       builder: BUILDER_VERSION,
       normalizer: NORMALIZER_VERSION,
     };
-    const result = { ...base, entries: [], functions: [], strings: [], ms: 0 };
+    const result = { ...base, entries: [], functions: [], strings: [], dependencies: [], ms: 0 };
     await saveResult(cacheDir, { ...result, error: "GET … returned 503" });
     expect(await loadResult(cacheDir, "x", "1.0.0")).toBeUndefined();
     await saveResult(cacheDir, { ...result, error: null });

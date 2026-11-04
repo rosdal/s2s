@@ -106,6 +106,7 @@ export async function runBuilds(
             builder: "",
             normalizer: 0,
             entries: [],
+            dependencies: [],
             ms: 0,
             error: reply.error ?? "worker failed",
             functionCount: 0,

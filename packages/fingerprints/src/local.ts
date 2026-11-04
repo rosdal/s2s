@@ -125,6 +125,7 @@ export async function buildLocal(options: LocalBuildOptions): Promise<LocalBuild
           version: r.version,
           functions: r.functions.map((h) => BigInt(`0x${h}`)),
           strings: r.strings.map((h) => BigInt(`0x${h}`)),
+          dependencies: r.dependencies,
         })),
       );
     writer.setMeta({ corpus_date: new Date().toISOString().slice(0, 10), overlay: "true" });

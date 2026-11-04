@@ -32,6 +32,7 @@ import {
   type Thresholds,
 } from "./facts.js";
 import { buildIndexHtml } from "./html.js";
+import { synthesizeMissing } from "./barrels.js";
 import { hasJsx, relocateReferences } from "./relocate.js";
 import {
   configTs,
@@ -90,6 +91,8 @@ export interface ScaffoldFile {
   entry: { styles: string[]; modules: string[]; runtime: boolean };
   removedFromHtml: string[];
   files: { module: string; original: string; file: string }[];
+  /** Files s2s wrote because the code imports them and no source map held them. */
+  synthesized: { path: string; kind: string; importers: string[]; missing?: string[] }[];
 }
 
 /** For example "react · 3 modules · build passed". */
@@ -376,6 +379,7 @@ async function run(
     moves.set(file.toLowerCase(), projectPath(file, jsx));
   }
   let notes = 0;
+  const written = new Map<string, string | undefined>();
   const requirePackages = new Set<string>();
   const requireHelpers = new Set<string>();
   for (const file of sources) {
@@ -386,6 +390,7 @@ async function run(
     const text = texts.get(file);
     if (text === undefined) {
       await copyFile(path.join(paths.root, file), out);
+      written.set(next, undefined);
       continue;
     }
     const relocated = relocateReferences(text, file, next, moves);
@@ -399,7 +404,22 @@ async function run(
         warn(`${next}: requires a local file with require(); convert it to an import.`);
     }
     await writeFileAtomic(out, relocated);
+    written.set(next, relocated);
   }
+  // Barrels and stylesheets the code imports that no map could hold.
+  const synthesized = synthesizeMissing(written);
+  for (const file of synthesized)
+    await writeFileAtomic(path.join(paths.root, file.path), file.content);
+  const barrelCount = synthesized.filter((f) => f.kind === "barrel").length;
+  const stubCount = synthesized.length - barrelCount;
+  if (barrelCount > 0)
+    warn(
+      `Rebuilt ${barrelCount} barrel index file(s) no source map held; see analysis/scaffold.json.`,
+    );
+  if (stubCount > 0)
+    warn(
+      `Wrote ${stubCount} empty stylesheet(s) the code imports but no source map held; their rules come from the captured CSS.`,
+    );
 
   // 3. The entry: what the first page's own scripts and stylesheets ran, in document order.
   const pages = await readPages(paths);
@@ -539,6 +559,10 @@ async function run(
     entry: { styles: mainStyles, modules: mainModules, runtime },
     removedFromHtml,
     files,
+    synthesized: synthesized.map(({ content: _, ...rest }) => ({
+      ...rest,
+      path: rest.path.replace(/^project\//, ""),
+    })),
   };
   await writeJsonAtomic(path.join(paths.analysis, "scaffold.json"), scaffoldFile);
   if (!existsSync(paths.config)) await writeFileAtomic(paths.config, configTs());

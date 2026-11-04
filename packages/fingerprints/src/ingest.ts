@@ -52,6 +52,7 @@ export async function ingest(
         version: v.version,
         functions: v.functions.map(fromHex),
         strings: v.strings.map(fromHex),
+        dependencies: v.dependencies ?? [],
       })),
     );
     if (added > 0) summary.packages++;

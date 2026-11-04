@@ -236,6 +236,44 @@ describe("index and matcher", () => {
     }
   });
 
+  test("code a package shares with its dependency is credited to the dependency", async () => {
+    // `wrapper` ships a prebuilt bundle that inlines all of `core`, like vue's dist bundles.
+    const file2 = path.join(tmp, "deps.sqlite");
+    const core = lib("core", 1);
+    const writer = new IndexWriter(file2);
+    const prints = async (name: string, code: string, dependencies: string[]) => {
+      const p = await fingerprintCode(code);
+      return [
+        {
+          name,
+          version: "1.0.0",
+          functions: p.functions.map((f) => f.hash),
+          strings: p.strings.map((s) => s.hash),
+          dependencies,
+        },
+      ];
+    };
+    writer.addPackage("core", await prints("core", core, []));
+    writer.addPackage(
+      "wrapper",
+      await prints(
+        "wrapper",
+        `${core}
+${lib("wrapper", 1)}`,
+        ["core"],
+      ),
+    );
+    writer.close();
+    const index = FingerprintIndex.open(file2);
+    try {
+      const onlyCore = await matchBundles([{ id: "b", url: "u", text: core }], [index]);
+      expect(onlyCore.packages.map((p) => p.name)).toEqual(["core"]);
+      expect(index.packages.get(2)?.dependencies).toEqual(["core"]);
+    } finally {
+      index.close();
+    }
+  });
+
   test("a handful of shared functions is not presence", async () => {
     const index = FingerprintIndex.open(file);
     try {

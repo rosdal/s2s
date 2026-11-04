@@ -5,7 +5,7 @@ import { toSigned, toUnsigned } from "./hash.js";
 import { NORMALIZER_VERSION } from "./normalize.js";
 
 /** Bumped when the tables or the posting encoding change. */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 /** A function hash shared by more packages than this is a common helper, not evidence. */
 export const MAX_SHARING = 20;
 /** A distinctive string is one found in exactly one package. */
@@ -21,7 +21,9 @@ CREATE TABLE IF NOT EXISTS packages (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
   functions INTEGER NOT NULL DEFAULT 0,
-  strings INTEGER NOT NULL DEFAULT 0
+  strings INTEGER NOT NULL DEFAULT 0,
+  -- JSON array: every runtime and peer dependency any indexed version declared.
+  dependencies TEXT NOT NULL DEFAULT '[]'
 );
 CREATE TABLE IF NOT EXISTS versions (
   package_id INTEGER NOT NULL,
@@ -166,6 +168,8 @@ export interface IndexPackage {
   versions: string[];
   functions: number;
   strings: number;
+  /** Dependencies of any indexed version: code shared with one of them belongs to it. */
+  dependencies: string[];
 }
 
 export class IndexError extends Error {
@@ -278,13 +282,16 @@ function readMeta(db: Database): IndexMeta {
 
 function readPackages(db: Database): Map<number, IndexPackage> {
   const out = new Map<number, IndexPackage>();
-  for (const row of db.prepare("SELECT id, name, functions, strings FROM packages").all() as {
+  for (const row of db
+    .prepare("SELECT id, name, functions, strings, dependencies FROM packages")
+    .all() as {
     id: number;
     name: string;
     functions: number;
     strings: number;
+    dependencies: string;
   }[])
-    out.set(row.id, { ...row, versions: [] });
+    out.set(row.id, { ...row, dependencies: JSON.parse(row.dependencies), versions: [] });
   for (const row of db.prepare("SELECT package_id, idx, version FROM versions").all() as {
     package_id: number;
     idx: number;
@@ -302,6 +309,8 @@ export interface VersionPrints {
   version: string;
   functions: Iterable<bigint>;
   strings: Iterable<bigint>;
+  /** Runtime and peer dependencies this version declares. */
+  dependencies?: string[];
 }
 
 /**
@@ -372,6 +381,16 @@ export class IndexWriter {
     this.#db.exec("BEGIN");
     try {
       this.#db.prepare("INSERT OR IGNORE INTO packages (name) VALUES (?)").run(name);
+      const known = this.#db
+        .prepare("SELECT dependencies FROM packages WHERE name = ?")
+        .get(name) as {
+        dependencies: string;
+      };
+      const deps = new Set<string>(JSON.parse(known.dependencies));
+      for (const v of fresh) for (const d of v.dependencies ?? []) if (d !== name) deps.add(d);
+      this.#db
+        .prepare("UPDATE packages SET dependencies = ? WHERE name = ?")
+        .run(JSON.stringify([...deps].sort()), name);
       const { id } = this.#db.prepare("SELECT id FROM packages WHERE name = ?").get(name) as {
         id: number;
       };

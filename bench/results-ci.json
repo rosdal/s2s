@@ -1,0 +1,98 @@
+{
+  "generated": "2026-11-04",
+  "seed": 1,
+  "apps": 4,
+  "minChars": 2000,
+  "index": {
+    "corpusDate": "2026-11-04",
+    "packages": 11,
+    "versions": 262
+  },
+  "overall": {
+    "builds": 8,
+    "medium": {
+      "precision": 1,
+      "recall": 1,
+      "tp": 25,
+      "fp": 0,
+      "fn": 0
+    },
+    "low": {
+      "precision": 1,
+      "recall": 1,
+      "tp": 28,
+      "fp": 0,
+      "fn": 0
+    },
+    "exactVersion": 0.5,
+    "sameMinor": 1,
+    "vendorIoU": 0.585,
+    "msPerMB": 561
+  },
+  "heldOut": {
+    "builds": 4,
+    "medium": {
+      "precision": 1,
+      "recall": 1,
+      "tp": 12,
+      "fp": 0,
+      "fn": 0
+    },
+    "low": {
+      "precision": 1,
+      "recall": 1,
+      "tp": 14,
+      "fp": 0,
+      "fn": 0
+    },
+    "exactVersion": 0.5,
+    "sameMinor": 1,
+    "vendorIoU": 0.548,
+    "msPerMB": 583
+  },
+  "byBuild": {
+    "esbuild": {
+      "builds": 4,
+      "medium": {
+        "precision": 1,
+        "recall": 1,
+        "tp": 13,
+        "fp": 0,
+        "fn": 0
+      },
+      "low": {
+        "precision": 1,
+        "recall": 1,
+        "tp": 14,
+        "fp": 0,
+        "fn": 0
+      },
+      "exactVersion": 0.5,
+      "sameMinor": 1,
+      "vendorIoU": 0.622,
+      "msPerMB": 540
+    },
+    "heldout": {
+      "builds": 4,
+      "medium": {
+        "precision": 1,
+        "recall": 1,
+        "tp": 12,
+        "fp": 0,
+        "fn": 0
+      },
+      "low": {
+        "precision": 1,
+        "recall": 1,
+        "tp": 14,
+        "fp": 0,
+        "fn": 0
+      },
+      "exactVersion": 0.5,
+      "sameMinor": 1,
+      "vendorIoU": 0.548,
+      "msPerMB": 583
+    }
+  },
+  "failures": 0
+}

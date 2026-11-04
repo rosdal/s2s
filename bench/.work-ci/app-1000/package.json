@@ -1,0 +1,16 @@
+{
+  "name": "bench-app-1000",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "nanoid": "5.1.11",
+    "immer": "11.0.1",
+    "mitt": "3.0.1",
+    "@floating-ui/core": "1.6.6",
+    "dayjs": "1.11.18",
+    "clsx": "0.0.1",
+    "@floating-ui/dom": "1.6.11",
+    "zustand": "4.5.4",
+    "js-cookie": "3.0.6"
+  }
+}

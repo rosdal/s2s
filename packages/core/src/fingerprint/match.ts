@@ -159,6 +159,25 @@ export async function matchBundles(
   const total = universe.size;
   const fnOwners = lookupAll(indexes, "function", [...functionHashes]);
   const strOwners = lookupAll(indexes, "string", [...stringHashes]);
+  // Code a package shares with one of its own dependencies is the dependency's: a prebuilt
+  // bundle (`vue/dist/vue.esm-browser.js`) or code that later moved into its own package
+  // (framer-motion into motion-dom) must not claim the dependency's functions.
+  const depsOf = new Map<string, Set<string>>();
+  for (const index of indexes)
+    for (const pkg of index.packages.values()) {
+      const set = depsOf.get(pkg.name) ?? new Set<string>();
+      for (const d of pkg.dependencies) set.add(d);
+      depsOf.set(pkg.name, set);
+    }
+  for (const owners of [...fnOwners.values(), ...strOwners.values()]) {
+    if (owners.size < 2) continue;
+    const names = [...owners.keys()];
+    const drop = names.filter((name) =>
+      names.some((other) => other !== name && depsOf.get(name)?.has(other)),
+    );
+    // Packages that depend on each other cancel out; then nobody is dropped.
+    if (drop.length < names.length) for (const name of drop) owners.delete(name);
+  }
   // An overlay can push a hash over the sharing limit; the merged view applies it again.
   for (const [hash, owners] of fnOwners) if (owners.size > MAX_SHARING) fnOwners.delete(hash);
   for (const [hash, owners] of strOwners) if (owners.size > 1) strOwners.delete(hash);

@@ -35,19 +35,24 @@ export function exec(
   });
 }
 
-/** `<pm> run <script>` in the project folder. */
-export function runScript(
+// biome-ignore lint/suspicious/noControlCharactersInRegex: escape codes are what it removes
+const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
+
+/** `<pm> run <script>` in the project folder, its output without colour codes. */
+export async function runScript(
   dir: string,
   pm: PackageManager,
   script: string,
   signal?: AbortSignal,
 ): Promise<ExecResult> {
-  return exec(pm, ["run", script], {
+  const result = await exec(pm, ["run", script], {
     cwd: dir,
     // Colour codes would end up in the build output the agent reads.
     env: { FORCE_COLOR: "0", NO_COLOR: "1" },
     ...(signal ? { signal } : {}),
   });
+  // Some tools (rolldown) colour their output whatever NO_COLOR says.
+  return { ...result, output: result.output.replace(ANSI, "") };
 }
 
 /**

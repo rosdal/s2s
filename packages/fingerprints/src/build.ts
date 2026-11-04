@@ -19,7 +19,12 @@ import {
 } from "./variants.js";
 
 /** Bumped when bundling or the variants change, so cached results are rebuilt. */
-export const BUILDER_VERSION = "2";
+export const BUILDER_VERSION = "3";
+/**
+ * Bumped only when bundling or minifying changes what an entry hashes to. Separate from
+ * `BUILDER_VERSION`, so result-format changes reuse the expensive per-entry work.
+ */
+const ENTRY_CACHE_VERSION = "2";
 
 /** One package@version of the corpus, with where its tarball lives. */
 export interface CorpusVersion {
@@ -50,6 +55,8 @@ export interface VersionResult {
   functions: string[];
   /** Distinct string hashes, hex. */
   strings: string[];
+  /** Runtime and peer dependencies the version declares. */
+  dependencies: string[];
   ms: number;
   /** Set when the whole version failed (tarball, unpack). */
   error: string | null;
@@ -112,6 +119,7 @@ export async function buildVersion(
     entries: [],
     functions: [],
     strings: [],
+    dependencies: [],
     ms: 0,
     error: null,
   };
@@ -133,6 +141,12 @@ export async function buildVersion(
     await unpackTarball(tgz, pkgDir);
     const pkg = JSON.parse(await readFile(path.join(pkgDir, "package.json"), "utf8"));
     const externals = externalsOf(pkg);
+    result.dependencies = [
+      ...new Set([
+        ...Object.keys(pkg.dependencies ?? {}),
+        ...Object.keys(pkg.peerDependencies ?? {}),
+      ]),
+    ].sort();
     const files = (await readdir(pkgDir, { recursive: true, withFileTypes: true }))
       .filter((d) => d.isFile())
       .map((d) => path.relative(pkgDir, path.join(d.parentPath, d.name)).split(path.sep).join("/"));
@@ -191,7 +205,7 @@ interface EntryPrints {
  */
 async function entryPrints(code: string, cacheDir: string): Promise<EntryPrints> {
   const key = createHash("sha256")
-    .update(`${BUILDER_VERSION}\u0000${NORMALIZER_VERSION}\u0000`)
+    .update(`${ENTRY_CACHE_VERSION}\u0000${NORMALIZER_VERSION}\u0000`)
     .update(code)
     .digest("hex");
   const file = path.join(cacheDir, "entries", key.slice(0, 2), `${key}.json`);

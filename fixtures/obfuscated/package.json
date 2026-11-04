@@ -1,0 +1,11 @@
+{
+  "name": "@s2s-fixtures/obfuscated",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.js"
+  },
+  "devDependencies": {
+    "javascript-obfuscator": "5.9.1"
+  }
+}

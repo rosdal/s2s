@@ -4,7 +4,9 @@ body {
   font-family: sans-serif;
 }
 .clock {
-  width: 240px;
+  margin: 0;
+  font-size: 160px;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 .carousel {

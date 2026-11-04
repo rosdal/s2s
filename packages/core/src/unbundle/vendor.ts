@@ -6,11 +6,41 @@ export function vendorNamespace(pkg: string): string {
   return `__vendor_${pkg.replace(/^@/, "").replace(/[^A-Za-z0-9_$]/g, "_")}`;
 }
 
+/**
+ * Packages whose bundled code usually spans more than one entry point. Stage 3 names the package,
+ * not the subpath, so a vendor namespace for `react-dom` must also carry `react-dom/client`
+ * (`createRoot`) for the code that called through it to keep working.
+ */
+export const MERGED_ENTRIES: Record<string, { entries: string[]; sinceMajor: number }> = {
+  // react-dom/client arrived in React 18.
+  "react-dom": { entries: ["react-dom", "react-dom/client"], sinceMajor: 18 },
+};
+
+/** The import lines for a vendor namespace: one `import * as`, or a merge of several entry points. */
+export function vendorNamespaceLines(
+  namespace: string,
+  pkg: string,
+  version?: string | null,
+): string[] {
+  const merged = MERGED_ENTRIES[pkg];
+  const major = version ? Number.parseInt(version, 10) : Number.NaN;
+  // An unknown version gets the merge: React 18 and later are what sites ship today.
+  const entries = merged && !(major < merged.sinceMajor) ? merged.entries : undefined;
+  if (!entries || !namespace.startsWith("__vendor_"))
+    return [`import * as ${namespace} from ${JSON.stringify(pkg)};`];
+  const parts = entries.map((_, i) => `${namespace}$${i}`);
+  return [
+    ...entries.map((entry, i) => `import * as ${parts[i]} from ${JSON.stringify(entry)};`),
+    `const ${namespace} = { ${parts.map((p) => `...${p}`).join(", ")} };`,
+  ];
+}
+
 export function vendorImport(span: Pick<VendorSpan, "package" | "version">): ImportLine {
   return {
     target: { kind: "package", name: span.package },
     names: [],
     namespace: vendorNamespace(span.package),
+    version: span.version,
     note: `vendor code from ${span.package}${span.version ? `@${span.version}` : ""} was removed here; the entry point is a guess, so check the import path and what is used from it`,
   };
 }

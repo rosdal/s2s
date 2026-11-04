@@ -18,6 +18,7 @@ import { fixDefaultImports } from "./interop.js";
 import { PASSES, type PassName, type PassResult, transform } from "./passes.js";
 import { type ChunkTable, splitScope } from "./split.js";
 import type { ChunkInput, Draft, ImportLine, UnpackContext } from "./types.js";
+import { vendorNamespaceLines } from "./vendor.js";
 import { unpackWebpack } from "./webpack.js";
 
 export interface UnbundleOptions {
@@ -374,7 +375,13 @@ async function run(
     p.draft.code = code;
   }
   let cssUrlRewrites = 0;
-  const cssOut: { file: string; text: string; pages: string[]; url: string }[] = [];
+  const cssOut: {
+    file: string;
+    text: string;
+    pages: string[];
+    url: string;
+    kind: "sheet" | "module";
+  }[] = [];
   for (const sheet of sheets) {
     if (sheet.root) cssUrlRewrites += rewriteCssUrls(sheet.root, sheet.url, sheet.file, findAsset);
     cssOut.push({
@@ -382,6 +389,7 @@ async function run(
       text: sheet.root ? sheet.root.toString() : sheet.text,
       pages: sheet.pages,
       url: sheet.url,
+      kind: "sheet",
     });
   }
   for (const [map, extracted] of moduleCss) {
@@ -390,7 +398,13 @@ async function run(
     const url = parsed[extracted.sheet]?.url ?? "";
     const file = moduleFiles.get(map) as string;
     cssUrlRewrites += rewriteCssUrls(root, url, file, findAsset);
-    cssOut.push({ file, text: root.toString(), pages: map.draft.chunk.pages, url });
+    cssOut.push({
+      file,
+      text: root.toString(),
+      pages: map.draft.chunk.pages,
+      url,
+      kind: "module",
+    });
   }
   let jsAssetRewrites = 0;
   for (const p of placed) jsAssetRewrites += rewriteJsAssets(p.draft, findAsset);
@@ -567,6 +581,9 @@ async function run(
         bytes: spanBytes(d),
       })),
     modules: reportModules,
+    // Where each stylesheet and exact source came from, so Stage 5 can wire them to the page.
+    styles: cssOut.map((c) => ({ file: c.file, url: c.url, kind: c.kind, pages: c.pages })),
+    exactSources: inputs.exact.map((e) => ({ file: e.file, chunk: e.chunkUrl, pages: e.pages })),
   });
 
   const errors = reportModules.reduce((n, m) => n + m.errors.length, 0);
@@ -661,7 +678,11 @@ function renderModule(
     if (line.note) notes.push(line.note);
     const spec = specOf(line, p, toSpec, tables, missing);
     if (!spec) continue;
-    if (line.namespace) add(`import * as ${line.namespace} from ${quote(spec.from)};`);
+    if (line.namespace) {
+      if (line.target.kind === "package")
+        for (const text of vendorNamespaceLines(line.namespace, spec.from, line.version)) add(text);
+      else add(`import * as ${line.namespace} from ${quote(spec.from)};`);
+    }
     if (line.defaultName) add(`import ${line.defaultName} from ${quote(spec.from)};`);
     const names = spec.names;
     if (names.length > 0) {

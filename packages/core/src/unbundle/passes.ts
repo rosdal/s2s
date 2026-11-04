@@ -77,6 +77,10 @@ export async function transform(
       passes.push({ pass, status: "not-needed", changes: 0 });
       continue;
     }
+    if (pass === "jsx" && !usesJsxRuntime(current)) {
+      passes.push({ pass, status: "not-needed", changes: 0 });
+      continue;
+    }
     if (HEAVY.has(pass) && current.length > MAX_TRANSFORM_BYTES) {
       passes.push({ pass, status: "too-large", changes: 0 });
       continue;
@@ -92,6 +96,17 @@ export async function transform(
     }
   }
   return { code: current, obfuscated, passes };
+}
+
+/**
+ * Whether a module could hold compiled JSX: it calls a JSX runtime function or mentions React or
+ * Preact. Without that evidence the JSX pass would turn unrelated `createElement` calls
+ * (`document.createElement(tag, { is })` in Vue's runtime) into JSX.
+ */
+export function usesJsxRuntime(code: string): boolean {
+  return /\b_?jsx(?:s|DEV)?\s*\(|\bReact\b|__vendor_p?react|["'](?:react|preact)(?:\/[\w-]+)?["']/.test(
+    code,
+  );
 }
 
 function run(adapter: LibraryAdapter, pass: PassName, code: string): Promise<string> {

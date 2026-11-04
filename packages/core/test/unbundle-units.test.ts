@@ -291,7 +291,7 @@ describe("helpers", () => {
         throw new Error("boom");
       },
     };
-    const result = await transform("var a = !0;", adapter, new Set(["prettier"]));
+    const result = await transform('var a = !0; n.jsx("div", {});', adapter, new Set(["prettier"]));
     expect(result.passes.find((p) => p.pass === "jsx")).toMatchObject({
       status: "error",
       error: "boom",

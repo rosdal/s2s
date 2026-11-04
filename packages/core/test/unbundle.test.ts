@@ -299,6 +299,9 @@ describe("Vite and Rollup", () => {
     await common(run);
     expect(jsModules(run).filter((m) => m.boundary === "real").length).toBeGreaterThan(0);
     expect(run.modules.modules.some((m) => m.origin === "renamed")).toBe(true);
+    const all = run.js.map((m) => m.code).join("\n");
+    expect(all).toContain("<h1>Vite React mapped fixture</h1>");
+    expect(all).toMatch(/<footer className="footer">/);
     const mapped = await checkSimilarity("vite-react-mapped", run);
     const heuristic = await unbundleFixture("vite-react");
     const guessed = similarity(await sourcesOf("vite-react"), heuristic.js).score;

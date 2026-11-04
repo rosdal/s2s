@@ -24,7 +24,7 @@
     "dist"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.15"
   },
   "publishConfig": {
     "access": "public",
@@ -42,6 +42,9 @@
     "@jridgewell/trace-mapping": "^0.3.31",
     "@wakaru/unminify": "0.2.2",
     "citty": "^0.2.2",
+    "esbuild": "^0.28.2",
+    "oxc-minify": "^0.157.0",
+    "oxc-parser": "^0.157.0",
     "p-limit": "^7.3.3",
     "pixelmatch": "^7.2.0",
     "playwright-core": "^1.64.1",
@@ -49,11 +52,14 @@
     "postcss": "8.5.32",
     "prettier": "3.9.10",
     "robots-parser": "^3.0.1",
+    "terser": "^5.51.2",
     "tldts": "^7.4.19",
     "webcrack": "2.16.0",
+    "xxhash-wasm": "^1.1.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@rosdal/s2s-core": "workspace:*"
+    "@rosdal/s2s-core": "workspace:*",
+    "@rosdal/s2s-fingerprints": "workspace:*"
   }
 }

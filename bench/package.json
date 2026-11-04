@@ -1,0 +1,21 @@
+{
+  "name": "s2s-bench",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "Fingerprint benchmark: generated apps with a known answer key, built with settings the index never saw.",
+  "scripts": {
+    "bench": "node run.mjs"
+  },
+  "dependencies": {
+    "@jridgewell/trace-mapping": "^0.3.31",
+    "@rosdal/s2s-core": "workspace:*",
+    "esbuild": "^0.28.2",
+    "rolldown": "^1.2.16",
+    "terser": "^5.51.2",
+    "terser-webpack-plugin": "^5.6.1",
+    "vite": "^8.3.5",
+    "webpack": "^5.112.2"
+  }
+}

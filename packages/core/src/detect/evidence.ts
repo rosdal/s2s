@@ -28,6 +28,7 @@ export const Signal = z.enum([
   "runtime",
   "framework-marker",
   "project-hint",
+  "fingerprint",
 ]);
 export type Signal = z.infer<typeof Signal>;
 

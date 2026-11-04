@@ -1,0 +1,30 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`variants > every variant builds, and the union covers the held-out setting 1`] = `
+{
+  "esbuild": {
+    "esbuild": 1,
+    "oxc-es2020": 0.8,
+    "terser": 0.6,
+    "terser-es2015": 0.6,
+  },
+  "oxc-es2020": {
+    "esbuild": 0.8,
+    "oxc-es2020": 1,
+    "terser": 0.5,
+    "terser-es2015": 0.5,
+  },
+  "terser": {
+    "esbuild": 0.6,
+    "oxc-es2020": 0.5,
+    "terser": 1,
+    "terser-es2015": 1,
+  },
+  "terser-es2015": {
+    "esbuild": 0.6,
+    "oxc-es2020": 0.5,
+    "terser": 1,
+    "terser-es2015": 1,
+  },
+}
+`;

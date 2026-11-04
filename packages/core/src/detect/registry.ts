@@ -37,14 +37,19 @@ export class RegistryError extends Error {
   override name = "RegistryError";
 }
 
-/** The default cache folder: `$S2S_CACHE_DIR`, then `$XDG_CACHE_HOME/s2s`, then `~/.cache/s2s`. */
-export function defaultCacheDir(): string {
-  const base =
+/** The s2s cache root: `$S2S_CACHE_DIR`, then `$XDG_CACHE_HOME/s2s`, then `~/.cache/s2s`. */
+export function cacheRoot(): string {
+  return (
     process.env.S2S_CACHE_DIR ??
     (process.env.XDG_CACHE_HOME
       ? path.join(process.env.XDG_CACHE_HOME, "s2s")
-      : path.join(homedir(), ".cache", "s2s"));
-  return path.join(base, "registry");
+      : path.join(homedir(), ".cache", "s2s"))
+  );
+}
+
+/** The registry response cache, under `cacheRoot()`. */
+export function defaultCacheDir(): string {
+  return path.join(cacheRoot(), "registry");
 }
 
 /** Reduce a full or abbreviated packument to `PackageInfo`. */

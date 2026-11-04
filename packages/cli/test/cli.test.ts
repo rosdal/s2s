@@ -351,3 +351,25 @@ describe("s2s scaffold and verify", () => {
     expect(verifyHelp.out.join("\n")).toContain("--update-baseline");
   });
 });
+
+describe("s2s db", () => {
+  test("status without an index says to pull one and exits 1", async () => {
+    const { cliIO, out } = io();
+    expect(await runCli(["db", "status"], "0.0.0", cliIO)).toBe(1);
+    expect(out.join("\n")).toMatch(/Shared index: none\. Run "s2s db pull"/);
+  });
+
+  test("status --json reports the folder", async () => {
+    const { cliIO, out } = io();
+    await runCli(["db", "status", "--json"], "0.0.0", cliIO);
+    const status = JSON.parse(out.join("\n"));
+    expect(status.shared).toBeNull();
+    expect(status.dir).toMatch(/fingerprints$/);
+  });
+
+  test("build without a package or tarball is a usage error", async () => {
+    const { cliIO, err } = io();
+    expect(await runCli(["db", "build"], "0.0.0", cliIO)).toBe(2);
+    expect(err.join("\n")).toMatch(/--from-tarball/);
+  });
+});

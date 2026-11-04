@@ -12,6 +12,8 @@ import { installProject, localVersion, type PackageManager } from "../src/detect
 import type { BundleRanges } from "../src/detect/ranges.js";
 import type { FetchLike } from "../src/detect/registry.js";
 import { type DetectOptions, detect, explain, type PackagesFile } from "../src/detect/run.js";
+import { IndexWriter } from "../src/fingerprint/db.js";
+import { fingerprintCode } from "../src/fingerprint/normalize.js";
 import { maps } from "../src/maps/run.js";
 import { FIXTURES_DIR, type FixtureName, serveFixture } from "./helpers/fixtures.js";
 
@@ -102,6 +104,8 @@ async function detectFixture(
   const result = await detect({
     workspace: outDir,
     registry: { fetch: recordedFetch, cacheDir: path.join(outDir, ".registry-cache") },
+    // An empty folder: a fingerprint index in the developer's cache must not change the answers.
+    fingerprints: { dir: path.join(outDir, ".fingerprints") },
     managerVersion: () => undefined,
     ...options,
   });
@@ -303,6 +307,62 @@ describe("s2s detect on fixtures", () => {
     expect(off.packages.packages.every((p) => p.registry?.status !== "passed")).toBe(true);
     const manifest = await readManifest(workspacePaths(off.outDir).manifest);
     expect(manifest?.stages.detect.stats.registryRequests).toBe(0);
+  });
+
+  test("the fingerprint index finds react-dom in a bundle with no other react-dom signal", async () => {
+    // Index the fixture's installed react-dom client build: the real version with every function,
+    // and a made-up older one with half of them, so the version has something to tell apart.
+    const dir = path.join(tmp, "fp-index");
+    await mkdir(dir, { recursive: true });
+    const nm = path.join(FIXTURES_DIR, "vite-react", "node_modules", "react-dom");
+    const version = JSON.parse(await readFile(path.join(nm, "package.json"), "utf8")).version;
+    const code = await readFile(path.join(nm, "cjs", "react-dom-client.production.js"), "utf8");
+    const prints = await fingerprintCode(code);
+    const functions = prints.functions.map((f) => f.hash);
+    const writer = new IndexWriter(path.join(dir, "fingerprints-2099-01-01.sqlite"));
+    writer.addPackage("react-dom", [
+      {
+        name: "react-dom",
+        version: "18.0.0",
+        functions: functions.slice(0, functions.length / 2),
+        strings: [],
+      },
+      { name: "react-dom", version, functions, strings: prints.strings.map((s) => s.hash) },
+    ]);
+    writer.setMeta({ corpus_date: new Date().toISOString().slice(0, 10) });
+    writer.close();
+
+    const run = await detectFixture("vite-react", { fingerprints: { dir } });
+    const evidence = await run.evidence("fingerprints");
+    expect(evidence.length).toBeGreaterThan(0);
+    expect(evidence.every((e) => e.package === "react-dom" && e.signal === "fingerprint")).toBe(
+      true,
+    );
+    expect(evidence[0]?.version).toBe(version);
+    expect(evidence[0]?.strength).toBe("strong");
+    expect(evidence[0]?.excerpt).toMatch(/of \d+ indexed functions.* match react-dom@/);
+    const record = run.packages.packages.find((p) => p.name === "react-dom");
+    expect(record?.signals).toContain("fingerprint");
+    expect(record?.version).toBe(version);
+    // Here react-dom's version string already marks its modules; fingerprint ranges rank below
+    // that, so they add nothing (detect-units covers them on their own).
+    expect(run.ranges.flatMap((b) => b.ranges).some((r) => r.package === "react-dom")).toBe(true);
+    const explanation = await explain(run.outDir, "react-dom");
+    expect(explanation.evidence.some((e) => e.signal === "fingerprint")).toBe(true);
+  });
+
+  test("a missing fingerprint index is a warning that names s2s db pull", async () => {
+    const source = await capturedWorkspace("vite-react");
+    const outDir = path.join(tmp, "runs", `no-index-${runs++}`);
+    await cp(source, outDir, { recursive: true });
+    const result = await detect({
+      workspace: outDir,
+      offline: true,
+      fingerprints: { dir: path.join(outDir, "nowhere") },
+      managerVersion: () => undefined,
+    });
+    expect(result.status).toBe("complete");
+    expect(result.warnings.some((w) => w.includes("s2s db pull"))).toBe(true);
   });
 
   test("explain lists every piece of evidence behind a package", async () => {

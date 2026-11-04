@@ -14,6 +14,7 @@ import { checkPackages, DEFAULT_POPULARITY_FLOOR } from "./check.js";
 import { COLLECTORS, type CollectorName } from "./collectors.js";
 import { type DetectContext, loadContext } from "./context.js";
 import { type Evidence, EvidenceFile, finalizeEvidence, isNpmName } from "./evidence.js";
+import { collectFingerprints, type FingerprintOptions } from "./fingerprints.js";
 import {
   CONFIDENCE_RANK,
   type Confidence,
@@ -51,6 +52,11 @@ export interface DetectOptions {
   /** Packages to keep out of `package.json`. */
   reject?: string[];
   popularityFloor?: number;
+  /**
+   * The fingerprint index: where to find it (default: the s2s cache), or `false` to skip the
+   * fingerprint collector.
+   */
+  fingerprints?: FingerprintOptions | false;
   /** Registry client settings; tests pass a `fetch` that serves recorded responses. */
   registry?: RegistryOptions;
   /** Injected for tests: the installed version of a package manager. */
@@ -221,7 +227,9 @@ interface RunOutcome {
   install?: Omit<InstallResult, "output">;
 }
 
-const COLLECTOR_FILES: Record<CollectorName, string> = {
+type EvidenceSource = CollectorName | "fingerprints";
+
+const COLLECTOR_FILES: Record<EvidenceSource, string> = {
   cdn: "cdn.json",
   sourcemap: "sourcemap.json",
   banners: "banners.json",
@@ -229,6 +237,7 @@ const COLLECTOR_FILES: Record<CollectorName, string> = {
   "version-strings": "version-strings.json",
   runtime: "runtime.json",
   framework: "framework.json",
+  fingerprints: "fingerprints.json",
 };
 
 export function detectPaths(paths: WorkspacePaths) {
@@ -239,7 +248,7 @@ export function detectPaths(paths: WorkspacePaths) {
     installLog: path.join(paths.analysis, "install.log"),
     project: path.join(paths.root, "project"),
     packageJson: path.join(paths.root, "project", "package.json"),
-    evidence: (name: CollectorName) => path.join(paths.evidence, COLLECTOR_FILES[name]),
+    evidence: (name: EvidenceSource) => path.join(paths.evidence, COLLECTOR_FILES[name]),
   };
 }
 
@@ -253,7 +262,7 @@ async function run(
   const out = detectPaths(paths);
   await Promise.all(
     [
-      ...Object.keys(COLLECTOR_FILES).map((n) => out.evidence(n as CollectorName)),
+      ...Object.keys(COLLECTOR_FILES).map((n) => out.evidence(n as EvidenceSource)),
       out.packages,
       out.review,
       out.vendorRanges,
@@ -272,6 +281,23 @@ async function run(
     const file = finalizeEvidence(name, await collect(ctx));
     await writeJsonAtomic(out.evidence(name), file);
     evidence.push(...file.evidence);
+  }
+  // The fingerprint collector also marks vendor ranges, so it runs on its own.
+  let fingerprintRanges: Awaited<ReturnType<typeof collectFingerprints>>["ranges"] = new Map();
+  let fingerprintStats: Record<string, number> = {};
+  if (options.fingerprints !== false) {
+    options.signal?.throwIfAborted();
+    const collected = await collectFingerprints(ctx, options.fingerprints ?? {});
+    for (const message of collected.warnings) warn(message);
+    const file = finalizeEvidence("fingerprints", collected.items);
+    await writeJsonAtomic(out.evidence("fingerprints"), { ...file, ...collected.report });
+    evidence.push(...file.evidence);
+    fingerprintRanges = collected.ranges;
+    if (collected.report.stats)
+      fingerprintStats = {
+        fingerprintPackages: collected.report.matches.length,
+        fingerprintMs: collected.report.stats.ms,
+      };
   }
 
   // 2. Merge and score.
@@ -351,7 +377,12 @@ async function run(
   const installed = new Map<string, string | null>();
   for (const r of records)
     if (r.status === "dependency" || r.status === "transitive") installed.set(r.name, r.version);
-  const bundles = await vendorRanges({ ctx, evidence, accepted: installed });
+  const bundles = await vendorRanges({
+    ctx,
+    evidence,
+    accepted: installed,
+    fingerprints: fingerprintRanges,
+  });
   const vendorBytes = new Map<string, number>();
   for (const bundle of bundles)
     for (const range of bundle.ranges)
@@ -435,6 +466,7 @@ async function run(
       bundlesWithVendorCode: bundles.length,
       vendorBytes: bundles.reduce((n, b) => n + b.vendorBytes, 0),
       registryRequests: registry?.requests ?? 0,
+      ...fingerprintStats,
       ...(install ? { installExitCode: install.exitCode } : {}),
     },
     details: {
@@ -594,7 +626,7 @@ export async function explain(workspace: string, name: string, cwd?: string): Pr
   }
   const record = file.packages.find((p) => p.name === name) ?? null;
   const evidence: Evidence[] = [];
-  for (const collector of Object.keys(COLLECTOR_FILES) as CollectorName[]) {
+  for (const collector of Object.keys(COLLECTOR_FILES) as EvidenceSource[]) {
     try {
       const parsed = EvidenceFile.parse(
         JSON.parse(await readFile(out.evidence(collector), "utf8")),

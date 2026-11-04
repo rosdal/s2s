@@ -1,6 +1,7 @@
 packages:
   - packages/*
   - fixtures/*
+  - bench
 allowBuilds:
   esbuild: true
   # Pulled in by sass (css-preprocessor fixture) for watch mode only; its native build is not needed.
@@ -8,3 +9,24 @@ allowBuilds:
   # webcrack's default deobfuscation sandbox. s2s passes webcrack its own sandbox (a locked-down
   # child process), so the native addon is never loaded and need not be compiled.
   isolated-vm: false
+minimumReleaseAgeExclude:
+  - "@oxc-minify/binding-android-arm-eabi@0.157.0"
+  - "@oxc-minify/binding-android-arm64@0.157.0"
+  - "@oxc-minify/binding-darwin-arm64@0.157.0"
+  - "@oxc-minify/binding-darwin-x64@0.157.0"
+  - "@oxc-minify/binding-freebsd-x64@0.157.0"
+  - "@oxc-minify/binding-linux-arm-gnueabihf@0.157.0"
+  - "@oxc-minify/binding-linux-arm-musleabihf@0.157.0"
+  - "@oxc-minify/binding-linux-arm64-gnu@0.157.0"
+  - "@oxc-minify/binding-linux-arm64-musl@0.157.0"
+  - "@oxc-minify/binding-linux-ppc64-gnu@0.157.0"
+  - "@oxc-minify/binding-linux-riscv64-gnu@0.157.0"
+  - "@oxc-minify/binding-linux-riscv64-musl@0.157.0"
+  - "@oxc-minify/binding-linux-s390x-gnu@0.157.0"
+  - "@oxc-minify/binding-linux-x64-gnu@0.157.0"
+  - "@oxc-minify/binding-linux-x64-musl@0.157.0"
+  - "@oxc-minify/binding-openharmony-arm64@0.157.0"
+  - "@oxc-minify/binding-win32-arm64-msvc@0.157.0"
+  - "@oxc-minify/binding-win32-ia32-msvc@0.157.0"
+  - "@oxc-minify/binding-win32-x64-msvc@0.157.0"
+  - oxc-minify@0.157.0

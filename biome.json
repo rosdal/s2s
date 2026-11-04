@@ -12,7 +12,8 @@
       "!packages/core/test/samples",
       "!packages/core/test/__snapshots__",
       "!.changeset/*.md",
-      "!fixtures/registry/*.json"
+      "!fixtures/registry/*.json",
+      "!packages/fingerprints/corpus/corpus.lock.json"
     ]
   },
   "formatter": {

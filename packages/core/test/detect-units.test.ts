@@ -8,11 +8,12 @@ import { workspacePaths } from "../src/capture/workspace.js";
 import { findBanners, parseBanner } from "../src/detect/banners.js";
 import { checkPackages } from "../src/detect/check.js";
 import { collectRuntime } from "../src/detect/collectors.js";
+import type { DetectContext } from "../src/detect/context.js";
 import { loadContext } from "../src/detect/context.js";
 import { ByteIndex, type Evidence } from "../src/detect/evidence.js";
 import { mergeEvidence } from "../src/detect/merge.js";
 import { chooseManager, installCommand, projectName, versionSpec } from "../src/detect/project.js";
-import { findModules, moduleAt } from "../src/detect/ranges.js";
+import { findModules, moduleAt, vendorRanges } from "../src/detect/ranges.js";
 import {
   type FetchLike,
   Registry,
@@ -628,5 +629,55 @@ describe("review regressions", () => {
     });
     controller.abort();
     await expect(pending).rejects.not.toBeInstanceOf(RegistryError);
+  });
+});
+
+describe("fingerprint vendor ranges", () => {
+  test("cover accepted packages only, in UTF-8 bytes", async () => {
+    const text = `${"a".repeat(100)}é${"b".repeat(100)}`;
+    const ctx = {
+      paths: workspacePaths(path.join(tmpdir(), "no-such-workspace")),
+      records: [],
+      licenseFiles: [],
+      assets: [
+        {
+          hash: "h",
+          kind: "js",
+          urls: ["https://x/app.js"],
+          origin: "first-party",
+          size: 202,
+          pages: [],
+          lastModified: null,
+        },
+      ],
+      text: async () => text,
+      readJson: async () => undefined,
+    } as unknown as DetectContext;
+    const bundles = await vendorRanges({
+      ctx,
+      evidence: [],
+      accepted: new Map([["p", "1.2.3"]]),
+      fingerprints: new Map([
+        [
+          "h",
+          [
+            { package: "p", start: 10, end: 150, evidence: "fingerprints:0" },
+            { package: "q", start: 160, end: 190, evidence: "fingerprints:1" },
+          ],
+        ],
+      ]),
+    });
+    expect(bundles).toHaveLength(1);
+    expect(bundles[0]?.ranges).toEqual([
+      {
+        package: "p",
+        version: "1.2.3",
+        start: 10,
+        end: 151,
+        method: "fingerprint",
+        module: null,
+        evidence: ["fingerprints:0"],
+      },
+    ]);
   });
 });

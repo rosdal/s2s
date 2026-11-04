@@ -40,3 +40,5 @@ overrides:
   zod: ^4.6.6
   "glob@^10": ^14.0.2
   "minimatch@^9": ^11.0.1
+  "minimatch@^3": file:tools/compat/minimatch-cjs
+  crypto-browserify: file:tools/compat/crypto-browserify-stub

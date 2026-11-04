@@ -10,6 +10,7 @@ import { type RequestRecord, readRequestLog } from "../src/capture/request-log.j
 import { RobotsCache } from "../src/capture/robots.js";
 import { workspacePaths } from "../src/capture/workspace.js";
 import {
+  FIXTURES_DIR,
   type FixtureName,
   type FixtureServer,
   fixtureChunks,
@@ -309,8 +310,11 @@ describe("bundler fixtures", () => {
 
 describe("cdn-libs fixture", () => {
   const STUBS: Record<string, string> = {
-    "jquery.min.js": 'window.jQuery={fn:{jquery:"3.7.1"}};',
     "lodash.min.js": 'window._={VERSION:"4.17.21"};',
+  };
+  /** Real copies of files the page loads with an integrity hash, which a stub would fail. */
+  const VENDORED: Record<string, string> = {
+    "https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js": "jquery-3.7.1.min.js",
   };
 
   /** Serve CDN URLs from stubs; everything else outside localhost fails. */
@@ -321,10 +325,15 @@ describe("cdn-libs fixture", () => {
         const url = new URL(route.request().url());
         const file = url.pathname.split("/").pop() ?? "";
         const isCss = url.pathname.endsWith(".css") || url.hostname === "fonts.googleapis.com";
+        const vendored = VENDORED[url.href];
         await route.fulfill({
           status: 200,
           contentType: isCss ? "text/css" : "text/javascript",
-          body: STUBS[file] ?? (isCss ? "body{}" : `/* ${url.href} */`),
+          // A CORS response, as the CDN sends: `crossorigin` scripts need one to run.
+          headers: { "access-control-allow-origin": "*" },
+          body: vendored
+            ? await readFile(path.join(FIXTURES_DIR, "cdn-libs", "vendor", vendored))
+            : (STUBS[file] ?? (isCss ? "body{}" : `/* ${url.href} */`)),
         });
       },
     );

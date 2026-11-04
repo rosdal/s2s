@@ -13,6 +13,7 @@
       "!packages/core/test/__snapshots__",
       "!.changeset/*.md",
       "!fixtures/registry/*.json",
+      "!fixtures/*/vendor",
       "!packages/fingerprints/corpus/corpus.lock.json"
     ]
   },

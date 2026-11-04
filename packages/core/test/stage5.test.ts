@@ -1,6 +1,6 @@
 import { execFileSync, execSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { appendFile, cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, cp, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { BrowserContext } from "playwright-core";
@@ -143,6 +143,20 @@ describe("agent files", () => {
     ].map((m) => m[1]);
     expect(listed.sort()).toEqual(accepted.sort());
 
+    // Every exact source (CSS and JSON too, not only the graph's modules) is in the project.
+    const exactDir = path.join(a, "recovered", "sourcemap");
+    if (existsSync(exactDir)) {
+      for (const entry of await readdir(exactDir, { recursive: true, withFileTypes: true })) {
+        if (!entry.isFile()) continue;
+        const rel = path
+          .relative(exactDir, path.join(entry.parentPath, entry.name))
+          .split(path.sep)
+          .join("/");
+        if (/^_(?:vendor|virtual)\//.test(rel)) continue;
+        const base = path.join(a, "project", "src", "_recovered", "_sourcemap", rel);
+        expect(existsSync(base) || existsSync(base.replace(/\.js$/, ".jsx")), rel).toBe(true);
+      }
+    }
     // Every module is in the project and listed in exactly one group.
     const modules = JSON.parse(await read(a, "analysis/modules.json")) as {
       modules: { id: string; kind: string }[];

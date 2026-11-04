@@ -125,7 +125,12 @@ export function installCommand(
     case "pnpm":
       return { args: ["install", "--ignore-scripts", "--ignore-workspace"], env };
     case "npm":
-      return { args: ["install", "--ignore-scripts", "--no-audit", "--no-fund"], env };
+      // Versions inferred from a bundle often disagree on peers (a guessed react-router wanting a
+      // newer react); npm would refuse the whole install over it. pnpm, yarn and bun only warn.
+      return {
+        args: ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--legacy-peer-deps"],
+        env,
+      };
     case "bun":
       return { args: ["install", "--ignore-scripts"], env };
     case "yarn": {

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import type { RequestRecord } from "../src/capture/request-log.js";
+import { installCommand } from "../src/detect/project.js";
 import {
   agentsMd,
   claudeSettings,
@@ -13,8 +14,10 @@ import {
 import { type AgentFacts, DEFAULT_THRESHOLDS, projectScript } from "../src/scaffold/facts.js";
 import { buildIndexHtml } from "../src/scaffold/html.js";
 import { hasJsx, relocateReferences } from "../src/scaffold/relocate.js";
-import { chooseTarget } from "../src/scaffold/run.js";
+import { addMissingImports, chooseTarget } from "../src/scaffold/run.js";
 import { mainTs, scaffoldPackageJson } from "../src/scaffold/templates.js";
+import { callableClass } from "../src/unbundle/adapter.js";
+import type { ModulesFile } from "../src/unbundle/graph.js";
 import { usesJsxRuntime } from "../src/unbundle/passes.js";
 import { vendorNamespaceLines } from "../src/unbundle/vendor.js";
 import { loadThresholds } from "../src/verify/config.js";
@@ -210,6 +213,43 @@ describe("Stage 4 fixes", () => {
     expect(vendorNamespaceLines("__vendor_vue", "vue")).toEqual([
       'import * as __vendor_vue from "vue";',
     ]);
+  });
+});
+
+describe("acceptance-run fixes", () => {
+  test("npm installs past peer conflicts between inferred versions", () => {
+    expect(installCommand("npm", "11.0.0").args).toContain("--legacy-peer-deps");
+  });
+
+  test("a constructor meant to be called without new is not a class", () => {
+    expect(
+      callableClass(
+        "class c {\n  constructor(e, t) {\n    if (!(this instanceof c)) {\n      return new c(e, t);\n    }\n  }\n}",
+      ),
+    ).toBe(true);
+    expect(callableClass("class c {\n  constructor(e) {\n    this.e = e;\n  }\n}")).toBe(false);
+  });
+
+  test("packages the code imports but package.json lacks are added", () => {
+    const pkg = {
+      name: "s",
+      version: "0.0.0",
+      private: true as const,
+      dependencies: { react: "19.2.5", "react-router": "8.5.1" } as Record<string, string>,
+      devDependencies: {},
+    };
+    const graph = {
+      modules: [{ packageImports: ["react", "react-router-dom", "left-pad"] }],
+      groups: [],
+    } as unknown as ModulesFile;
+    const warnings: string[] = [];
+    addMissingImports(pkg, graph, { packages: [] }, (m) => warnings.push(m));
+    expect(pkg.dependencies["react-router-dom"]).toBe("npm:react-router@8.5.1");
+    expect(pkg.dependencies["left-pad"]).toBe("latest");
+    expect(warnings).toHaveLength(2);
+    const v6 = { ...pkg, dependencies: { "react-router": "6.30.1" } as Record<string, string> };
+    addMissingImports(v6, graph, { packages: [] }, () => {});
+    expect(v6.dependencies["react-router-dom"]).toBe("6.30.1");
   });
 });
 

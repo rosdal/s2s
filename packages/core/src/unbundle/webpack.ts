@@ -146,7 +146,7 @@ export function unpackWebpack(
     const param = f.path.node.params[2];
     if (param?.type !== "Identifier") continue;
     const body = f.chunk.code.slice(start(f.path.node), end(f.path.node));
-    const name = param.name.replace(/\$/g, "\\$");
+    const name = param.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     if (new RegExp(`(?<![\\w$])${name}\\.[rd]\\(`).test(body))
       harmonyKeys.add(`${f.group}:${f.id}`);
   }

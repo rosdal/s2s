@@ -1,0 +1,574 @@
+{
+  "generated": "2026-11-04",
+  "seed": 1,
+  "apps": 30,
+  "minChars": 2000,
+  "index": {
+    "corpusDate": "2026-11-04",
+    "packages": 79,
+    "versions": 4154
+  },
+  "overall": {
+    "builds": 149,
+    "medium": {
+      "precision": 0.944,
+      "recall": 0.711,
+      "tp": 782,
+      "fp": 46,
+      "fn": 286
+    },
+    "low": {
+      "precision": 0.91,
+      "recall": 0.89,
+      "tp": 1016,
+      "fp": 101,
+      "fn": 109
+    },
+    "exactVersion": 0.634,
+    "sameMinor": 0.977,
+    "vendorIoU": 0.756,
+    "msPerMB": 452
+  },
+  "heldOut": {
+    "builds": 30,
+    "medium": {
+      "precision": 0.931,
+      "recall": 0.657,
+      "tp": 148,
+      "fp": 11,
+      "fn": 70
+    },
+    "low": {
+      "precision": 0.9,
+      "recall": 0.838,
+      "tp": 197,
+      "fp": 22,
+      "fn": 33
+    },
+    "exactVersion": 0.672,
+    "sameMinor": 0.993,
+    "vendorIoU": 0.777,
+    "msPerMB": 412
+  },
+  "byBuild": {
+    "webpack": {
+      "builds": 29,
+      "medium": {
+        "precision": 0.935,
+        "recall": 0.677,
+        "tp": 144,
+        "fp": 10,
+        "fn": 64
+      },
+      "low": {
+        "precision": 0.9,
+        "recall": 0.859,
+        "tp": 188,
+        "fp": 21,
+        "fn": 28
+      },
+      "exactVersion": 0.53,
+      "sameMinor": 1,
+      "vendorIoU": 0.72,
+      "msPerMB": 496
+    },
+    "vite": {
+      "builds": 30,
+      "medium": {
+        "precision": 0.952,
+        "recall": 0.746,
+        "tp": 160,
+        "fp": 8,
+        "fn": 48
+      },
+      "low": {
+        "precision": 0.916,
+        "recall": 0.926,
+        "tp": 207,
+        "fp": 19,
+        "fn": 14
+      },
+      "exactVersion": 0.66,
+      "sameMinor": 0.965,
+      "vendorIoU": 0.795,
+      "msPerMB": 515
+    },
+    "rolldown": {
+      "builds": 30,
+      "medium": {
+        "precision": 0.952,
+        "recall": 0.737,
+        "tp": 159,
+        "fp": 8,
+        "fn": 50
+      },
+      "low": {
+        "precision": 0.916,
+        "recall": 0.916,
+        "tp": 206,
+        "fp": 19,
+        "fn": 16
+      },
+      "exactVersion": 0.671,
+      "sameMinor": 0.964,
+      "vendorIoU": 0.792,
+      "msPerMB": 432
+    },
+    "esbuild": {
+      "builds": 30,
+      "medium": {
+        "precision": 0.95,
+        "recall": 0.742,
+        "tp": 171,
+        "fp": 9,
+        "fn": 54
+      },
+      "low": {
+        "precision": 0.916,
+        "recall": 0.914,
+        "tp": 218,
+        "fp": 20,
+        "fn": 18
+      },
+      "exactVersion": 0.632,
+      "sameMinor": 0.968,
+      "vendorIoU": 0.706,
+      "msPerMB": 406
+    },
+    "heldout": {
+      "builds": 30,
+      "medium": {
+        "precision": 0.931,
+        "recall": 0.657,
+        "tp": 148,
+        "fp": 11,
+        "fn": 70
+      },
+      "low": {
+        "precision": 0.9,
+        "recall": 0.838,
+        "tp": 197,
+        "fp": 22,
+        "fn": 33
+      },
+      "exactVersion": 0.672,
+      "sameMinor": 0.993,
+      "vendorIoU": 0.777,
+      "msPerMB": 412
+    }
+  },
+  "failures": 1,
+  "fixtures": [
+    {
+      "fixture": "nextjs-pages",
+      "key": [
+        {
+          "name": "react",
+          "version": "19.3.1"
+        },
+        {
+          "name": "react-dom",
+          "version": "19.3.1"
+        }
+      ],
+      "found": [
+        {
+          "name": "react",
+          "version": "19.3.x",
+          "confident": true,
+          "correct": true,
+          "truth": "19.3.1",
+          "minorOk": true
+        },
+        {
+          "name": "react-dom",
+          "version": "19.3.x",
+          "confident": true,
+          "correct": true,
+          "truth": "19.3.1",
+          "minorOk": true
+        },
+        {
+          "name": "scheduler",
+          "version": "0.x",
+          "confident": false,
+          "correct": false,
+          "truth": null,
+          "minorOk": false
+        }
+      ],
+      "missed": []
+    },
+    {
+      "fixture": "pnpm-vendor",
+      "key": [
+        {
+          "name": "clsx",
+          "version": "2.1.1"
+        }
+      ],
+      "found": [],
+      "missed": ["clsx"]
+    },
+    {
+      "fixture": "version-strings",
+      "key": [
+        {
+          "name": "dayjs",
+          "version": "1.11.23"
+        },
+        {
+          "name": "gsap",
+          "version": "3.15.0"
+        },
+        {
+          "name": "lodash",
+          "version": "4.18.1"
+        },
+        {
+          "name": "react",
+          "version": "19.3.1"
+        },
+        {
+          "name": "react-dom",
+          "version": "19.3.1"
+        },
+        {
+          "name": "three",
+          "version": "0.187.0"
+        }
+      ],
+      "found": [
+        {
+          "name": "dayjs",
+          "version": null,
+          "confident": false,
+          "correct": true,
+          "truth": "1.11.23",
+          "minorOk": false
+        },
+        {
+          "name": "gsap",
+          "version": "3.15.0",
+          "confident": true,
+          "correct": true,
+          "truth": "3.15.0",
+          "minorOk": true
+        },
+        {
+          "name": "lodash",
+          "version": "4.18.x",
+          "confident": true,
+          "correct": true,
+          "truth": "4.18.1",
+          "minorOk": true
+        },
+        {
+          "name": "react",
+          "version": "19.3.1",
+          "confident": true,
+          "correct": true,
+          "truth": "19.3.1",
+          "minorOk": true
+        },
+        {
+          "name": "react-dom",
+          "version": "19.3.x",
+          "confident": true,
+          "correct": true,
+          "truth": "19.3.1",
+          "minorOk": true
+        },
+        {
+          "name": "scheduler",
+          "version": "0.x",
+          "confident": false,
+          "correct": false,
+          "truth": null,
+          "minorOk": false
+        },
+        {
+          "name": "three",
+          "version": "0.187.0",
+          "confident": true,
+          "correct": true,
+          "truth": "0.187.0",
+          "minorOk": true
+        }
+      ],
+      "missed": []
+    },
+    {
+      "fixture": "vite-banners",
+      "key": [
+        {
+          "name": "gsap",
+          "version": "3.15.0"
+        },
+        {
+          "name": "react",
+          "version": "19.3.1"
+        },
+        {
+          "name": "react-dom",
+          "version": "19.3.1"
+        },
+        {
+          "name": "swiper",
+          "version": "14.4.0"
+        }
+      ],
+      "found": [
+        {
+          "name": "gsap",
+          "version": "3.15.0",
+          "confident": true,
+          "correct": true,
+          "truth": "3.15.0",
+          "minorOk": true
+        },
+        {
+          "name": "react",
+          "version": "19.3.1",
+          "confident": true,
+          "correct": true,
+          "truth": "19.3.1",
+          "minorOk": true
+        },
+        {
+          "name": "react-dom",
+          "version": "19.3.x",
+          "confident": true,
+          "correct": true,
+          "truth": "19.3.1",
+          "minorOk": true
+        },
+        {
+          "name": "scheduler",
+          "version": "0.x",
+          "confident": false,
+          "correct": false,
+          "truth": null,
+          "minorOk": false
+        },
+        {
+          "name": "swiper",
+          "version": "14.4.0",
+          "confident": true,
+          "correct": true,
+          "truth": "14.4.0",
+          "minorOk": true
+        }
+      ],
+      "missed": []
+    },
+    {
+      "fixture": "vite-react",
+      "key": [
+        {
+          "name": "react",
+          "version": "19.3.1"
+        },
+        {
+          "name": "react-dom",
+          "version": "19.3.1"
+        }
+      ],
+      "found": [
+        {
+          "name": "react",
+          "version": "19.3.1",
+          "confident": true,
+          "correct": true,
+          "truth": "19.3.1",
+          "minorOk": true
+        },
+        {
+          "name": "react-dom",
+          "version": "19.3.x",
+          "confident": true,
+          "correct": true,
+          "truth": "19.3.1",
+          "minorOk": true
+        },
+        {
+          "name": "scheduler",
+          "version": "0.x",
+          "confident": false,
+          "correct": false,
+          "truth": null,
+          "minorOk": false
+        }
+      ],
+      "missed": []
+    },
+    {
+      "fixture": "vite-react-mapped",
+      "key": [
+        {
+          "name": "react",
+          "version": "19.3.1"
+        },
+        {
+          "name": "react-dom",
+          "version": "19.3.1"
+        }
+      ],
+      "found": [
+        {
+          "name": "react",
+          "version": "19.3.1",
+          "confident": true,
+          "correct": true,
+          "truth": "19.3.1",
+          "minorOk": true
+        },
+        {
+          "name": "react-dom",
+          "version": "19.3.x",
+          "confident": true,
+          "correct": true,
+          "truth": "19.3.1",
+          "minorOk": true
+        },
+        {
+          "name": "scheduler",
+          "version": "0.x",
+          "confident": false,
+          "correct": false,
+          "truth": null,
+          "minorOk": false
+        }
+      ],
+      "missed": []
+    },
+    {
+      "fixture": "vue-app",
+      "key": [
+        {
+          "name": "vue",
+          "version": "3.5.44"
+        }
+      ],
+      "found": [
+        {
+          "name": "@vue/reactivity",
+          "version": "3.5.44",
+          "confident": true,
+          "correct": false,
+          "truth": null,
+          "minorOk": false
+        },
+        {
+          "name": "@vue/runtime-core",
+          "version": "3.5.44",
+          "confident": true,
+          "correct": false,
+          "truth": null,
+          "minorOk": false
+        },
+        {
+          "name": "vue",
+          "version": "3.5.44",
+          "confident": true,
+          "correct": true,
+          "truth": "3.5.44",
+          "minorOk": true
+        }
+      ],
+      "missed": []
+    },
+    {
+      "fixture": "webpack-license",
+      "key": [
+        {
+          "name": "gsap",
+          "version": "3.15.0"
+        },
+        {
+          "name": "react",
+          "version": "19.3.1"
+        },
+        {
+          "name": "react-dom",
+          "version": "19.3.1"
+        }
+      ],
+      "found": [
+        {
+          "name": "gsap",
+          "version": "3.15.0",
+          "confident": true,
+          "correct": true,
+          "truth": "3.15.0",
+          "minorOk": true
+        },
+        {
+          "name": "react",
+          "version": "19.3.x",
+          "confident": true,
+          "correct": true,
+          "truth": "19.3.1",
+          "minorOk": true
+        },
+        {
+          "name": "react-dom",
+          "version": "19.3.x",
+          "confident": true,
+          "correct": true,
+          "truth": "19.3.1",
+          "minorOk": true
+        },
+        {
+          "name": "scheduler",
+          "version": "0.x",
+          "confident": false,
+          "correct": false,
+          "truth": null,
+          "minorOk": false
+        }
+      ],
+      "missed": []
+    },
+    {
+      "fixture": "webpack-react",
+      "key": [
+        {
+          "name": "react",
+          "version": "19.3.1"
+        },
+        {
+          "name": "react-dom",
+          "version": "19.3.1"
+        }
+      ],
+      "found": [
+        {
+          "name": "react",
+          "version": "19.3.x",
+          "confident": true,
+          "correct": true,
+          "truth": "19.3.1",
+          "minorOk": true
+        },
+        {
+          "name": "react-dom",
+          "version": "19.3.x",
+          "confident": true,
+          "correct": true,
+          "truth": "19.3.1",
+          "minorOk": true
+        },
+        {
+          "name": "scheduler",
+          "version": "0.x",
+          "confident": false,
+          "correct": false,
+          "truth": null,
+          "minorOk": false
+        }
+      ],
+      "missed": []
+    }
+  ]
+}

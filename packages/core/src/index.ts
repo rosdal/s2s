@@ -36,6 +36,19 @@ export {
   summaryLine as detectSummaryLine,
 } from "./detect/run.js";
 export {
+  FINGERPRINT_REPO,
+  fingerprintDir,
+  type IndexFileStatus,
+  type IndexStatus,
+  indexStatus,
+  OVERLAY_FILE,
+  PullError,
+  type PullProgress,
+  type PullResult,
+  pullIndex,
+  STALE_DAYS,
+} from "./fingerprint/store.js";
+export {
   type MapsOptions,
   type MapsProgress,
   type MapsResult,

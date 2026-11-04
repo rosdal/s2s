@@ -8,6 +8,8 @@ export type NormalizedSource =
       path: string;
       /** True when the raw path was absolute (a build-machine path), so a project root may need cutting. */
       absolute: boolean;
+      /** How many leading `..` segments were dropped: how far the path climbed out of the map's folder. */
+      climb: number;
     }
   | { ok: false; reason: string };
 
@@ -89,11 +91,13 @@ export function normalizeSource(raw: string): NormalizedSource {
 
   const stack: string[] = [];
   let sawReal = false;
+  let climb = 0;
   for (const segment of s.split("/")) {
     if (segment === "" || segment === ".") continue;
     if (segment === "..") {
       if (stack.length > 0) stack.pop();
       else if (sawReal) return { ok: false, reason: `path escapes its root: ${raw}` };
+      else climb++;
       continue;
     }
     if (CONTROL.test(segment)) return { ok: false, reason: `control character in path: ${raw}` };
@@ -111,7 +115,7 @@ export function normalizeSource(raw: string): NormalizedSource {
       : stack.includes("node_modules")
         ? "vendor"
         : "first-party";
-  return { ok: true, kind, path, absolute };
+  return { ok: true, kind, path, absolute, climb: absolute ? 0 : climb };
 }
 
 /** Folder names that sit inside a project root, never above it. */

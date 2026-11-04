@@ -1,5 +1,6 @@
 import { type CommandDef, defineCommand, renderUsage, runCommand } from "citty";
 import { type CliIO, captureCommand } from "./commands/capture.js";
+import { dbCommand } from "./commands/db.js";
 import { detectCommand } from "./commands/detect.js";
 import { grabCommand } from "./commands/grab.js";
 import { interactive } from "./commands/interactive.js";
@@ -53,7 +54,10 @@ export async function runCli(
   const grab = grabCommand(io, version, (code) => {
     exitCode = code;
   });
-  const subCommands = { grab, capture, maps, detect, unbundle, scaffold, verify };
+  const db = dbCommand(io, (code) => {
+    exitCode = code;
+  });
+  const subCommands = { grab, capture, maps, detect, unbundle, scaffold, verify, db };
   const main = defineCommand({
     meta: {
       name: "s2s",

@@ -1,0 +1,180 @@
+name: Fingerprints
+
+# Builds the shared fingerprint index and publishes it as a `fingerprints-YYYY-MM-DD` release.
+# Weekly runs are incremental: only package versions the previous release lacks are built, then
+# merged into it. If GitHub's runner time limits get in the way, set `runner` to a self-hosted
+# label (the homelab fallback).
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Rebuild from scratch instead of adding to the last release
+        type: boolean
+        default: false
+      shards:
+        description: Number of build jobs
+        type: number
+        default: 64
+      runner:
+        description: Runner label for the build jobs
+        type: string
+        default: ubuntu-latest
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fingerprints
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      date: ${{ steps.matrix.outputs.date }}
+      base: ${{ steps.base.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter "@rosdal/s2s-fingerprints..." run build
+      - name: Refresh the corpus
+        # The temporary branch run builds the committed corpus.lock.json as is.
+        if: github.event_name != 'push'
+        run: |
+          node packages/fingerprints/dist/cli.js candidates
+          node packages/fingerprints/dist/cli.js lock --limit 1000
+      - name: Previous index
+        id: base
+        if: ${{ !inputs.full }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh release list --limit 100 --json tagName --jq '[.[].tagName | select(startswith("fingerprints-"))] | sort | last // ""')
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          mkdir -p base
+          if [ -n "$tag" ]; then
+            gh release download "$tag" --pattern '*.sqlite.zst' --dir base
+            zstd -d base/*.sqlite.zst -o base/base.sqlite
+          fi
+      - uses: actions/upload-artifact@v5
+        with:
+          name: corpus
+          path: |
+            packages/fingerprints/corpus/corpus.lock.json
+            base/base.sqlite
+          if-no-files-found: ignore
+      - id: matrix
+        run: |
+          n=${{ inputs.shards || (github.event_name == 'push' && 128) || 64 }}
+          echo "matrix=$(node -e "console.log(JSON.stringify([...Array($n).keys()]))")" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter "@rosdal/s2s-fingerprints..." run build
+      - uses: actions/download-artifact@v6
+        with:
+          name: corpus
+          path: corpus-artifact
+      - name: Cached entry hashes and tarballs
+        uses: actions/cache@v5
+        with:
+          path: |
+            .fingerprint-cache/entries
+            .fingerprint-cache/tarballs
+          key: fingerprints-${{ matrix.shard }}-${{ github.run_id }}
+          restore-keys: fingerprints-${{ matrix.shard }}-
+      - name: Build shard ${{ matrix.shard }}
+        run: |
+          cp corpus-artifact/packages/fingerprints/corpus/corpus.lock.json packages/fingerprints/corpus/
+          skip=""
+          if [ -f corpus-artifact/base/base.sqlite ]; then skip="--skip-index corpus-artifact/base/base.sqlite"; fi
+          node packages/fingerprints/dist/cli.js build --shard ${{ matrix.shard }}/${{ strategy.job-total }} $skip
+      # Uploaded even when the shard fails or times out: its finished versions still count.
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: results-${{ matrix.shard }}
+          path: .fingerprint-cache/results
+          if-no-files-found: ignore
+          retention-days: 7
+
+  merge:
+    needs: [plan, build]
+    # A failed shard does not hold the release back; its missing versions are built next week.
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter "@rosdal/s2s-fingerprints..." run build
+      - uses: actions/download-artifact@v6
+        with:
+          name: corpus
+          path: corpus-artifact
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: results-*
+          path: .fingerprint-cache/results
+          merge-multiple: true
+      - name: Merge
+        run: |
+          name=fingerprints-${{ needs.plan.outputs.date }}
+          base=""
+          if [ -f corpus-artifact/base/base.sqlite ]; then base="--base corpus-artifact/base/base.sqlite"; fi
+          node packages/fingerprints/dist/cli.js merge --out "dist/$name.sqlite" $base --corpus-date ${{ needs.plan.outputs.date }}
+          {
+            echo "## Index size by package (top 30)"
+            echo '```'
+            node packages/fingerprints/dist/cli.js report --index "dist/$name.sqlite" --top 30
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          node packages/fingerprints/dist/cli.js pack --index "dist/$name.sqlite" --out release
+          cp corpus-artifact/packages/fingerprints/corpus/corpus.lock.json release/
+      - name: Check the download size
+        run: |
+          size=$(stat -c %s release/*.sqlite.zst)
+          echo "compressed index: $size bytes" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$size" -gt 104857600 ]; then echo "::error::compressed index is over 100 MB"; exit 1; fi
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=fingerprints-${{ needs.plan.outputs.date }}
+          gh release create "$tag" release/* \
+            --title "Fingerprint index ${{ needs.plan.outputs.date }}" \
+            --notes "Fingerprint index for \`s2s db pull\`. Built from corpus.lock.json (attached)${{ needs.plan.outputs.base && format('; incremental on {0}', needs.plan.outputs.base) || '' }}." \
+            --latest=false

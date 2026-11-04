@@ -19,9 +19,14 @@ export function renderReportMd(report: VerifyReport): string {
     "| --- | --- | --- | --- | --- | --- | --- |",
     ...report.checks.map(
       (c) =>
-        `| ${c.page} | ${c.viewport} | ${pct(c.pixelDiff)} | ${c.domSimilarity.toFixed(3)} | ${c.newConsoleErrors.length} | ${c.failedRequests.length} | ${c.pass ? "pass" : "FAIL"} |`,
+        `| ${c.page} | ${c.viewport} | ${pct(c.pixelDiff)} | ${c.domSimilarity.toFixed(3)}${c.domBaseline === "viewport" ? "" : "*"} | ${c.newConsoleErrors.length} | ${c.failedRequests.length} | ${c.pass ? "pass" : "FAIL"} |`,
     ),
   );
+  if (report.checks.some((c) => c.domBaseline !== "viewport"))
+    out.push(
+      "",
+      "\\* The capture kept no DOM for this viewport (it predates per-viewport DOMs), so the DOM is compared with the primary viewport's and does not fail the check. Recapture to check it.",
+    );
   for (const c of failed) {
     out.push("", `## ${c.page} · ${c.viewport}`, "");
     for (const reason of c.reasons) out.push(`- ${reason}`);
@@ -32,7 +37,7 @@ export function renderReportMd(report: VerifyReport): string {
       if (regions) out.push(`- Worst regions (screenshot pixels): ${regions}`);
       if (c.diffImage) out.push(`- Diff image: \`${c.diffImage}\` (differences in red)`);
     }
-    if (c.domSimilarity < t.minDomSimilarity) {
+    if (c.domBaseline === "viewport" && c.domSimilarity < t.minDomSimilarity) {
       if (c.domMissing.length > 0) out.push(`- Elements missing: ${c.domMissing.join(", ")}`);
       if (c.domExtra.length > 0)
         out.push(`- Elements not in the capture: ${c.domExtra.join(", ")}`);

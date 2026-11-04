@@ -174,12 +174,21 @@ export function captureRunner(io: CliIO, version: string, shared?: StageReporter
     let ended = false;
     const statsLine = () =>
       `requests ${lastStats.requests} · stored ${formatBytes(lastStats.bytesStored)} · chunks discovered ${lastStats.chunksDiscovered} · maps ${lastStats.mapsFound}`;
+    // Off a terminal, a phase's line is printed when the phase ends, so its numbers are what that
+    // phase fetched; a warning flushes it early so the line still comes before what happened.
+    let pending: string | null = null;
+    let live = "";
+    const flush = () => {
+      if (pending !== null) stage?.detail(live, `${pending} ${statsLine()}`);
+      pending = null;
+    };
     const onProgress = (event: CaptureProgress) => {
       if (event.kind === "stats") {
         lastStats = event;
         return;
       }
       if (!stage) return;
+      if (event.kind !== "phase") flush();
       switch (event.kind) {
         case "start":
           stage.detail(`opening ${event.url}`, `Capturing ${event.url}\n  into ${event.workspace}`);
@@ -190,10 +199,10 @@ export function captureRunner(io: CliIO, version: string, shared?: StageReporter
           break;
         case "phase": {
           const where = [event.viewport, event.page].filter(Boolean).join(" ");
-          stage.detail(
-            `${event.phase} ${t.dim("·")} ${where} ${t.dim(`· ${plural(lastStats.requests, "request")} · ${formatBytes(lastStats.bytesStored)}`)}`,
-            `${event.phase.padEnd(8)} ${where.padEnd(28)} ${statsLine()}`,
-          );
+          const finished = pending === null ? null : `${pending} ${statsLine()}`;
+          live = `${event.phase} ${t.dim("·")} ${where} ${t.dim(`· ${plural(lastStats.requests, "request")} · ${formatBytes(lastStats.bytesStored)}`)}`;
+          stage.detail(live, finished);
+          pending = `${event.phase.padEnd(8)} ${where.padEnd(28)}`;
           break;
         }
         case "warning":
@@ -266,6 +275,7 @@ export function captureRunner(io: CliIO, version: string, shared?: StageReporter
       }
       throw error;
     } finally {
+      flush();
       removeHandler();
     }
   }

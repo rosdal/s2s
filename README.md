@@ -10,7 +10,7 @@ s2s turns a live URL into a plausible, buildable reconstruction of its frontend 
 
 ## Usage
 
-s2s needs Node 22 or later, Google Chrome (or Playwright's Chromium: `npx playwright install chromium`), git, and a package manager (pnpm, npm, yarn or bun).
+s2s needs Node 22.15 or later, Google Chrome (or Playwright's Chromium: `npx playwright install chromium`), git, and a package manager (pnpm, npm, yarn or bun).
 
 ```sh
 npx @rosdal/s2s grab https://example.com
@@ -36,6 +36,23 @@ Run `s2s` with no arguments for a guided prompt instead. Each stage is also its 
 | `s2s unbundle`      | Split first-party code into readable modules and agent work groups   |
 | `s2s scaffold`      | Write the Vite project, the agent files and a git repo               |
 | `s2s verify`        | Build the project and compare it with the capture                    |
+
+## Package fingerprints
+
+Sites rarely say which libraries they ship. Besides source maps, CDN URLs, banners and version strings, `s2s detect` recognizes packages by AST fingerprints of their minified functions, from an index of about 1,000 browser packages across their recent versions:
+
+```sh
+s2s db pull     # download the index (once; detect suggests it again after 30 days)
+s2s db status   # what is installed
+s2s db build @acme/ui@2.x   # fingerprint a private or niche package into a local overlay
+```
+
+On the benchmark (generated apps built with webpack, Vite, Rolldown and esbuild, plus a held-out terser setting the index never saw), at medium confidence and above:
+
+<!-- bench:start -->
+<!-- bench:end -->
+
+How it works, how to request a package and how to run the benchmark: [docs/fingerprints.md](docs/fingerprints.md).
 
 ## Reconstructing with Claude Code
 

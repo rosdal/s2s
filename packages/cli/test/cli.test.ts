@@ -252,7 +252,7 @@ describe("s2s unbundle", () => {
     const first = io();
     expect(await runCli(["unbundle", out], "0.0.0", first.cliIO)).toBe(0);
     expect(first.err.join("\n")).toMatch(
-      /✓ unbundle\s+\w+ · \d+ modules? · \d+% vendor dropped · \d+ groups?/,
+      /✓ unbundle\s+\w+ · \d+ modules?(?: \(\d+ from source maps, \d+ split\))? · \d+% vendor dropped · \d+ groups?/,
     );
     const modules = JSON.parse(await readFile(path.join(out, "analysis", "modules.json"), "utf8"));
     expect(modules.modules.length).toBeGreaterThan(0);
@@ -350,5 +350,27 @@ describe("s2s scaffold and verify", () => {
     const verifyHelp = io();
     expect(await runCli(["verify", "--help"], "0.0.0", verifyHelp.cliIO)).toBe(0);
     expect(verifyHelp.out.join("\n")).toContain("--update-baseline");
+  });
+});
+
+describe("s2s db", () => {
+  test("status without an index says to pull one and exits 1", async () => {
+    const { cliIO, out } = io();
+    expect(await runCli(["db", "status"], "0.0.0", cliIO)).toBe(1);
+    expect(out.join("\n")).toMatch(/Shared index: none\. Run "s2s db pull"/);
+  });
+
+  test("status --json reports the folder", async () => {
+    const { cliIO, out } = io();
+    await runCli(["db", "status", "--json"], "0.0.0", cliIO);
+    const status = JSON.parse(out.join("\n"));
+    expect(status.shared).toBeNull();
+    expect(status.dir).toMatch(/fingerprints$/);
+  });
+
+  test("build without a package or tarball is a usage error", async () => {
+    const { cliIO, err } = io();
+    expect(await runCli(["db", "build"], "0.0.0", cliIO)).toBe(2);
+    expect(err.join("\n")).toMatch(/--from-tarball/);
   });
 });

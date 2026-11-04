@@ -11,7 +11,7 @@ export default defineConfig({
   banner: { js: "#!/usr/bin/env node" },
   // core is private, so it is bundled in from source; its dependencies stay external and are
   // listed in this package's dependencies.
-  noExternal: ["@rosdal/s2s-core"],
+  noExternal: ["@rosdal/s2s-core", "@rosdal/s2s-fingerprints"],
   esbuildOptions(options) {
     options.conditions = ["source"];
   },

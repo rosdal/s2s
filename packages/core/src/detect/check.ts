@@ -1,5 +1,6 @@
 import type { MergedPackage, RegistryCheck } from "./merge.js";
 import {
+  compareVersions,
   isXRange,
   type PackageInfo,
   parseVersion,
@@ -84,6 +85,8 @@ export async function checkPackages(
   // A failed check outweighs any amount of text evidence: the name or version cannot be trusted.
   for (const pkg of packages) if (pkg.registry?.status === "failed") pkg.confidence = "low";
 
+  alignLockstepVersions(packages, infos);
+
   // A package another detected package depends on (at its chosen version) is transitive.
   const names = new Set(packages.map((p) => p.name));
   for (const pkg of packages) {
@@ -100,6 +103,57 @@ export async function checkPackages(
       if (names.has(parent) && !pkg.transitiveOf.includes(parent)) pkg.transitiveOf.push(parent);
     }
     pkg.transitiveOf.sort();
+  }
+}
+
+const DAY = 24 * 60 * 60 * 1000;
+/** How close two releases must be to count as one release of a package family. */
+const LOCKSTEP_WINDOW = 7 * DAY;
+
+/**
+ * An inferred version is the newest one before the bundle's date, which can land past a release
+ * that renamed a dependency the bundle still contains: Sentry 11 replaced
+ * `@sentry-internal/browser-utils` with `@sentry/browser-utils`, so a bundle holding the first
+ * cannot be on `@sentry/browser` 11. When a detected package nothing depends on was a dependency
+ * of an inferred package's earlier version released alongside it, step the parent back to that
+ * version, and re-infer the parent's other inferred dependencies as of that release.
+ */
+export function alignLockstepVersions(
+  packages: MergedPackage[],
+  infos: Map<string, PackageInfo>,
+): void {
+  const byName = new Map(packages.map((p) => [p.name, p]));
+  const depsOf = (p: MergedPackage) =>
+    (p.version ? infos.get(p.name)?.versions[p.version]?.dependencies : undefined) ?? [];
+  const claimed = () => new Set(packages.flatMap((p) => [...depsOf(p), ...p.parents]));
+  for (const parent of packages) {
+    const info = infos.get(parent.name);
+    if (parent.versionSource !== "inferred" || !parent.version || !info) continue;
+    const taken = claimed();
+    for (const orphan of packages) {
+      if (orphan === parent || taken.has(orphan.name) || !orphan.version) continue;
+      const orphanAt = Date.parse(infos.get(orphan.name)?.time[orphan.version] ?? "");
+      if (Number.isNaN(orphanAt)) continue;
+      const chosen = parent.version;
+      const earlier = Object.keys(info.versions)
+        .filter((v) => parseVersion(v)?.pre === null && compareVersions(v, chosen) < 0)
+        .filter((v) => info.versions[v]?.dependencies.includes(orphan.name))
+        .sort(compareVersions)
+        .at(-1);
+      const at = earlier ? Date.parse(info.time[earlier] ?? "") : Number.NaN;
+      if (!earlier || Number.isNaN(at) || Math.abs(at - orphanAt) > LOCKSTEP_WINDOW) continue;
+      parent.version = earlier;
+      for (const dep of info.versions[earlier]?.dependencies ?? []) {
+        const child = byName.get(dep);
+        const childInfo = infos.get(dep);
+        if (!child || !childInfo || child === orphan || child.versionSource !== "inferred")
+          continue;
+        const resolved = resolveVersion(childInfo, new Date(at + DAY));
+        if (resolved && child.version && compareVersions(resolved, child.version) < 0)
+          child.version = resolved;
+      }
+      break;
+    }
   }
 }
 

@@ -70,6 +70,7 @@ describe("StageList", () => {
 
 describe("verify report", () => {
   const check = (over: Partial<PageCheck>): PageCheck => ({
+    domBaseline: "viewport",
     page: "index",
     viewport: "desktop",
     url: "http://x/",

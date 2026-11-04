@@ -309,10 +309,11 @@ function attr(tag: string, name: string): string | undefined {
 }
 
 function decodeEntities(value: string): string {
+  // `&amp;` last, so `&amp;quot;` stays the text `&quot;` instead of becoming `"`.
   return value
-    .replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
 }
 
 /**

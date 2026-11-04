@@ -192,8 +192,11 @@ export function plural(count: number, word: string, many = `${word}s`): string {
 
 /** What a stage reports to whoever draws it. */
 export interface StageReporter {
-  /** A transient status: the spinner text on a terminal, an indented line elsewhere. */
-  detail(text: string, plain?: string): void;
+  /**
+   * A transient status: the spinner text on a terminal, an indented line elsewhere (`plain`, or
+   * `text` without it; `null` updates the spinner and prints nothing).
+   */
+  detail(text: string, plain?: string | null): void;
   /** A warning, kept under the stage once it finishes. */
   warn(message: string): void;
   /** A line of its own that stays (an explanation, a skipped stage's reason). */
@@ -333,7 +336,7 @@ export class StageList {
     return {
       detail: (text, plain) => {
         row.text = text;
-        if (this.live) return;
+        if (this.live || plain === null) return;
         this.surface.line(`  ${plain ?? text}`);
       },
       warn: (message) => {

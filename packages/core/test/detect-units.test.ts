@@ -8,11 +8,12 @@ import { workspacePaths } from "../src/capture/workspace.js";
 import { findBanners, parseBanner } from "../src/detect/banners.js";
 import { checkPackages } from "../src/detect/check.js";
 import { collectRuntime } from "../src/detect/collectors.js";
+import type { DetectContext } from "../src/detect/context.js";
 import { loadContext } from "../src/detect/context.js";
 import { ByteIndex, type Evidence } from "../src/detect/evidence.js";
 import { mergeEvidence } from "../src/detect/merge.js";
 import { chooseManager, installCommand, projectName, versionSpec } from "../src/detect/project.js";
-import { findModules, moduleAt } from "../src/detect/ranges.js";
+import { findModules, moduleAt, vendorRanges } from "../src/detect/ranges.js";
 import {
   type FetchLike,
   Registry,
@@ -76,6 +77,29 @@ describe("parseBanner", () => {
     expect(parseBanner("/** @license React\n * scheduler.production.min.js */")[0]?.name).toBe(
       "scheduler",
     );
+  });
+
+  test("comment markers come off in linear time, whatever the run of stars", () => {
+    expect(parseBanner("/*! lodash v4.17.21 */")).toContainEqual({
+      name: "lodash",
+      version: "4.17.21",
+      shape: "name-version",
+    });
+    const started = Date.now();
+    parseBanner(`/*${"*".repeat(100_000)}x`);
+    parseBanner(`/*${"*".repeat(100_000)}*/`);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  test("a React build file inside a folder belongs to the folder's package", () => {
+    for (const file of [
+      "use-sync-external-store-shim/with-selector.production.js",
+      "use-sync-external-store-shim.production.js",
+      "use-sync-external-store-with-selector.production.js",
+    ])
+      expect(parseBanner(`/**\n * @license React\n * ${file}\n */`)).toEqual([
+        { name: "use-sync-external-store", version: null, shape: "file-name" },
+      ]);
   });
 
   test("React 17 banners give the version to the file's package", () => {
@@ -440,6 +464,61 @@ describe("checkPackages", () => {
     expect(by.inner?.transitiveOf).toEqual(["real"]);
   });
 
+  test("an inferred parent steps back to the release that still depended on a detected orphan", async () => {
+    // Sentry 11 renamed @sentry-internal/browser-utils; a bundle holding it is on Sentry 10.
+    const docs: Record<string, unknown> = {
+      "@s/browser": {
+        name: "@s/browser",
+        versions: {
+          "10.0.0": { dependencies: { "@s-internal/utils": "10.0.0", "@s/core": "10.0.0" } },
+          "11.0.0": { dependencies: { "@s/utils": "11.0.0", "@s/core": "11.0.0" } },
+        },
+        time: { "10.0.0": "2025-01-01T00:00:00Z", "11.0.0": "2025-06-01T00:00:00Z" },
+      },
+      "@s-internal/utils": {
+        name: "@s-internal/utils",
+        versions: { "10.0.0": { dependencies: { "@s/core": "10.0.0" } } },
+        time: { "10.0.0": "2025-01-01T01:00:00Z" },
+      },
+      "@s/core": {
+        name: "@s/core",
+        versions: { "10.0.0": {}, "11.0.0": {} },
+        time: { "10.0.0": "2025-01-01T00:00:00Z", "11.0.0": "2025-06-01T00:00:00Z" },
+      },
+      clsx: {
+        name: "clsx",
+        versions: { "2.0.0": {} },
+        time: { "2.0.0": "2025-03-01T00:00:00Z" },
+      },
+    };
+    const fetchDocs: FetchLike = async (url) => {
+      if (url.includes("downloads")) return Response.json({ downloads: 50_000 });
+      const name = decodeURIComponent(url.split("/").at(-1) ?? "");
+      const doc = docs[name];
+      return doc ? Response.json(doc) : new Response("{}", { status: 404 });
+    };
+    const path_ = (id: string, name: string) =>
+      ev({ id, package: name, signal: "sourcemap-path", strength: "strong", trusted: true });
+    const merged = mergeEvidence([
+      path_("a", "@s/browser"),
+      path_("b", "@s-internal/utils"),
+      path_("c", "@s/core"),
+      path_("d", "clsx"),
+    ]);
+    await checkPackages(merged, {
+      registry: new Registry({ cacheDir: path.join(tmp, "lockstep"), fetch: fetchDocs }),
+      popularityFloor: 1000,
+      cutoffOf: () => new Date("2025-12-01T00:00:00Z"),
+      warn: () => {},
+    });
+    const by = Object.fromEntries(merged.map((p) => [p.name, p]));
+    expect(by["@s/browser"]?.version).toBe("10.0.0");
+    expect(by["@s/core"]?.version).toBe("10.0.0");
+    expect(by["@s-internal/utils"]?.transitiveOf).toEqual(["@s/browser"]);
+    // An unrelated orphan released months apart from any parent moves nothing.
+    expect(by.clsx?.version).toBe("2.0.0");
+  });
+
   test("offline, nothing is fetched; untrusted names fail and trusted ones are skipped", async () => {
     const merged = mergeEvidence([
       ev({ id: "a", package: "text-only", version: "1.0.0" }),
@@ -628,5 +707,55 @@ describe("review regressions", () => {
     });
     controller.abort();
     await expect(pending).rejects.not.toBeInstanceOf(RegistryError);
+  });
+});
+
+describe("fingerprint vendor ranges", () => {
+  test("cover accepted packages only, in UTF-8 bytes", async () => {
+    const text = `${"a".repeat(100)}é${"b".repeat(100)}`;
+    const ctx = {
+      paths: workspacePaths(path.join(tmpdir(), "no-such-workspace")),
+      records: [],
+      licenseFiles: [],
+      assets: [
+        {
+          hash: "h",
+          kind: "js",
+          urls: ["https://x/app.js"],
+          origin: "first-party",
+          size: 202,
+          pages: [],
+          lastModified: null,
+        },
+      ],
+      text: async () => text,
+      readJson: async () => undefined,
+    } as unknown as DetectContext;
+    const bundles = await vendorRanges({
+      ctx,
+      evidence: [],
+      accepted: new Map([["p", "1.2.3"]]),
+      fingerprints: new Map([
+        [
+          "h",
+          [
+            { package: "p", start: 10, end: 150, evidence: "fingerprints:0" },
+            { package: "q", start: 160, end: 190, evidence: "fingerprints:1" },
+          ],
+        ],
+      ]),
+    });
+    expect(bundles).toHaveLength(1);
+    expect(bundles[0]?.ranges).toEqual([
+      {
+        package: "p",
+        version: "1.2.3",
+        start: 10,
+        end: 151,
+        method: "fingerprint",
+        module: null,
+        evidence: ["fingerprints:0"],
+      },
+    ]);
   });
 });

@@ -60,6 +60,11 @@ export interface PageCheck {
   diffImage: string | null;
   masked: number;
   domSimilarity: number;
+  /**
+   * What the DOM was compared with: this viewport's own capture, the primary viewport's (a
+   * capture from before s2s kept one per viewport), or nothing.
+   */
+  domBaseline: "viewport" | "primary" | "none";
   domMissing: string[];
   domExtra: string[];
   newConsoleErrors: string[];
@@ -379,6 +384,7 @@ async function check(
               store,
               thresholds,
               known: knownErrors(page.slug, viewport),
+              primary: viewport === captured[0],
               options,
             }),
           );
@@ -444,6 +450,8 @@ async function checkPage(input: {
   store: BodyStore;
   thresholds: Thresholds;
   known: Set<string>;
+  /** The viewport the capture wrote `dom.html` for. */
+  primary: boolean;
   options: VerifyOptions;
 }): Promise<PageCheck> {
   const { context, paths, viewport, origin, dist, replay, store, thresholds, options } = input;
@@ -574,9 +582,21 @@ async function checkPage(input: {
       }
     }
 
-    const capturedDom = await readFile(path.join(paths.pages, slug, "dom.html"), "utf8").catch(
-      () => "",
+    // Responsive apps render different DOM per viewport; only a viewport's own capture compares.
+    const own = await readFile(path.join(paths.pages, slug, `dom.${viewport}.html`), "utf8").catch(
+      () => undefined,
     );
+    const shared = await readFile(path.join(paths.pages, slug, "dom.html"), "utf8").catch(
+      () => undefined,
+    );
+    const domBaseline: PageCheck["domBaseline"] =
+      own !== undefined || (shared !== undefined && input.primary)
+        ? "viewport"
+        : shared !== undefined
+          ? "primary"
+          : "none";
+    const capturedDom = own ?? shared ?? "";
+    const domGated = domBaseline === "viewport";
     const dom = (await page.evaluate(
       `(${DOM_SIMILARITY})(${JSON.stringify(capturedDom)})`,
     )) as DomResult;
@@ -586,7 +606,7 @@ async function checkPage(input: {
     const reasons: string[] = [];
     if (pixelDiff !== null && pixelDiff > thresholds.maxPixelDiff)
       reasons.push(`pixels differ by ${pct(pixelDiff)} (limit ${pct(thresholds.maxPixelDiff)})`);
-    if (dom.similarity < thresholds.minDomSimilarity)
+    if (domGated && dom.similarity < thresholds.minDomSimilarity)
       reasons.push(
         `DOM similarity ${dom.similarity.toFixed(3)} (limit ${thresholds.minDomSimilarity})`,
       );
@@ -610,6 +630,7 @@ async function checkPage(input: {
       diffImage,
       masked: mask.length,
       domSimilarity: dom.similarity,
+      domBaseline,
       domMissing: dom.missing,
       domExtra: dom.extra,
       newConsoleErrors: newErrors,

@@ -160,9 +160,12 @@ export function verifyReportLines(t: Theme, result: VerifyResult): string[] {
       c.page,
       t.muted(c.viewport),
       diff,
-      c.domSimilarity < report.thresholds.minDomSimilarity
-        ? t.error(c.domSimilarity.toFixed(2))
-        : c.domSimilarity.toFixed(2),
+      // A viewport the capture kept no DOM for is compared with the primary's and not gated.
+      c.domBaseline !== "viewport"
+        ? t.dim(`${c.domSimilarity.toFixed(2)}*`)
+        : c.domSimilarity < report.thresholds.minDomSimilarity
+          ? t.error(c.domSimilarity.toFixed(2))
+          : c.domSimilarity.toFixed(2),
       errors > 0 ? t.error(String(errors)) : t.muted("0"),
       bad ? paint(`${symbols.failed} ${shortReasons(c)}`) : paint(symbols.done),
     ];

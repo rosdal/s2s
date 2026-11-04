@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { copyFile, mkdir, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { readManifest, type StageState, writeManifest } from "../capture/manifest.js";
+import { type RequestRecord, readRequestLog } from "../capture/request-log.js";
 import { type WorkspacePaths, workspacePaths } from "../capture/workspace.js";
 import {
   installProject,
@@ -22,6 +23,7 @@ import {
   promptMd,
   slashCommandMd,
 } from "./agent-files.js";
+import { chunkExports, chunkStem, type SplitChunk, synthesizeMissing } from "./barrels.js";
 import { git, runScript } from "./exec.js";
 import {
   type AgentFacts,
@@ -43,6 +45,7 @@ import {
   viteConfig,
   WORKSPACE_GITIGNORE,
 } from "./templates.js";
+import { findWorkspacePackages, workspaceEntry } from "./workspaces.js";
 
 export interface ScaffoldOptions {
   workspace: string;
@@ -90,6 +93,14 @@ export interface ScaffoldFile {
   entry: { styles: string[]; modules: string[]; runtime: boolean };
   removedFromHtml: string[];
   files: { module: string; original: string; file: string }[];
+  /** Files s2s wrote because the code imports them and no source map held them. */
+  synthesized: {
+    path: string;
+    kind: string;
+    importers: string[];
+    missing?: string[];
+    placeholderTypes?: string[];
+  }[];
 }
 
 /** For example "react · 3 modules · build passed". */
@@ -376,6 +387,7 @@ async function run(
     moves.set(file.toLowerCase(), projectPath(file, jsx));
   }
   let notes = 0;
+  const written = new Map<string, string | undefined>();
   const requirePackages = new Set<string>();
   const requireHelpers = new Set<string>();
   for (const file of sources) {
@@ -386,6 +398,7 @@ async function run(
     const text = texts.get(file);
     if (text === undefined) {
       await copyFile(path.join(paths.root, file), out);
+      written.set(next, undefined);
       continue;
     }
     const relocated = relocateReferences(text, file, next, moves);
@@ -399,7 +412,79 @@ async function run(
         warn(`${next}: requires a local file with require(); convert it to an import.`);
     }
     await writeFileAtomic(out, relocated);
+    written.set(next, relocated);
   }
+  // The site's own monorepo packages, imported by name, resolve to their recovered folders. Only
+  // Stage 3's evidence counts as installed: package.json also holds what an earlier scaffold added.
+  const installed = new Set(packagesFile.packages.map((p) => p.name));
+  const workspace = findWorkspacePackages(
+    graph.modules.flatMap((m) => m.packageImports),
+    written.keys(),
+    installed,
+  );
+  // Chunks the unbundler split, with the export list each ends with, for imports of their
+  // entry module that no map recovered.
+  const bodyOf = new Map<string, string>();
+  for (const r of await readRequestLog(paths.requests).catch(() => [] as RequestRecord[]))
+    if (r.bodyHash && r.status >= 200 && r.status < 300) bodyOf.set(r.url, r.bodyHash);
+  const partsOf = new Map<string, string[]>();
+  for (const m of report.modules) {
+    const moved = moves.get(m.file.toLowerCase());
+    if (!moved) continue;
+    const list = partsOf.get(m.chunk) ?? [];
+    list.push(moved);
+    partsOf.set(m.chunk, list);
+  }
+  const chunks: SplitChunk[] = [];
+  for (const [url, parts] of partsOf) {
+    const stem = chunkStem(url);
+    const hash = bodyOf.get(url);
+    if (!stem || !hash) continue;
+    const code = await readFile(path.join(paths.bodies, hash), "utf8").catch(() => "");
+    const exports = chunkExports(code);
+    if (exports.length > 0) chunks.push({ stem, exports, parts });
+  }
+  // Barrels, stylesheets and chunk entries the code imports that no map could hold.
+  const synthesized = synthesizeMissing(written, workspace, chunks);
+  for (const file of synthesized)
+    await writeFileAtomic(path.join(paths.root, file.path), file.content);
+  const barrelCount = synthesized.filter((f) => f.kind === "barrel").length;
+  const stubCount = synthesized.filter((f) => f.kind === "style-stub").length;
+  const standIns = synthesized.filter((f) => f.kind === "chunk-stand-in");
+  if (barrelCount > 0)
+    warn(
+      `Rebuilt ${barrelCount} barrel index file(s) no source map held; see analysis/scaffold.json.`,
+    );
+  if (standIns.length > 0)
+    warn(
+      `Pointed ${standIns.length} import(s) of chunks split without a map at their split parts (${standIns.map((f) => path.posix.basename(f.path)).join(", ")}).`,
+    );
+  for (const file of synthesized) written.set(file.path, file.content);
+  const projectFiles = new Set(written.keys());
+  const aliases = workspace.map((w) => ({
+    name: w.name,
+    entry: `./${workspaceEntry(w, projectFiles).replace(/^project\//, "")}`,
+    root: `./${w.root.replace(/^project\//, "")}`,
+  }));
+  if (aliases.length > 0)
+    warn(
+      `Aliased ${aliases.length} package(s) to the site's own recovered workspace folders: ${aliases.map((a) => a.name).join(", ")}.`,
+    );
+  // Plugin virtual modules (`virtual:pwa-register`) whose generated code a map kept.
+  const virtuals = await virtualModules(paths, moves, written);
+  for (const v of virtuals) {
+    await writeFileAtomic(path.join(paths.root, v.file), v.content);
+    written.set(v.file, v.content);
+    aliases.push({ name: v.name, entry: `./${v.file.replace(/^project\//, "")}`, root: "." });
+  }
+  if (virtuals.length > 0)
+    warn(
+      `Aliased ${virtuals.length} plugin virtual module(s) to the code their map kept: ${virtuals.map((v) => v.name).join(", ")}.`,
+    );
+  if (stubCount > 0)
+    warn(
+      `Wrote ${stubCount} empty stylesheet(s) the code imports but no source map held; their rules come from the captured CSS.`,
+    );
 
   // 3. The entry: what the first page's own scripts and stylesheets ran, in document order.
   const pages = await readPages(paths);
@@ -517,13 +602,13 @@ async function run(
   }
 
   // 5. Project config.
-  await writeFileAtomic(path.join(paths.project, "vite.config.ts"), viteConfig(target));
-  await writeFileAtomic(path.join(paths.project, "tsconfig.json"), tsconfig(target));
+  await writeFileAtomic(path.join(paths.project, "vite.config.ts"), viteConfig(target, aliases));
+  await writeFileAtomic(path.join(paths.project, "tsconfig.json"), tsconfig(target, aliases));
   // Inferred versions often disagree on peers; every npm install in the project, the agent's
   // included, should get past that the way the scaffold's own install does.
   if (pm === "npm")
     await writeFileAtomic(path.join(paths.project, ".npmrc"), "legacy-peer-deps=true\n");
-  addMissingImports(pkg, graph, packagesFile, warn);
+  addMissingImports(pkg, graph, packagesFile, warn, new Set(aliases.map((a) => a.name)));
   await writeJsonAtomic(paths.packageJson, scaffoldPackageJson(pkg, target));
 
   // 6. Agent files and the analysis record of where everything went.
@@ -539,6 +624,10 @@ async function run(
     entry: { styles: mainStyles, modules: mainModules, runtime },
     removedFromHtml,
     files,
+    synthesized: synthesized.map(({ content: _, ...rest }) => ({
+      ...rest,
+      path: rest.path.replace(/^project\//, ""),
+    })),
   };
   await writeJsonAtomic(path.join(paths.analysis, "scaffold.json"), scaffoldFile);
   if (!existsSync(paths.config)) await writeFileAtomic(paths.config, configTs());
@@ -660,12 +749,15 @@ export function addMissingImports(
   graph: ModulesFile,
   packagesFile: PackagesFile,
   warn: (message: string) => void,
+  local: Set<string> = new Set(),
 ): void {
   const deps = { ...(pkg.dependencies ?? {}) };
+  // An earlier scaffold may have installed a local package from npm by mistake.
+  for (const name of local) delete deps[name];
   const known = (name: string) => name in deps || name in (pkg.devDependencies ?? {});
   const imported = new Set(graph.modules.flatMap((m) => m.packageImports));
   for (const name of [...imported].sort()) {
-    if (known(name) || name.startsWith("node:")) continue;
+    if (known(name) || local.has(name) || name.startsWith("node:")) continue;
     const seen = packagesFile.packages.find((p) => p.name === name);
     const version = seen?.version ?? companionSpec(name, deps, packagesFile) ?? "latest";
     deps[name] = version;
@@ -682,6 +774,40 @@ export function addMissingImports(
   pkg.dependencies = Object.fromEntries(
     Object.entries(deps).sort(([a], [b]) => a.localeCompare(b)),
   );
+}
+
+/**
+ * Sources named `.../virtual:<name>` in the maps: a Vite plugin's generated module. Each is
+ * written next to its recovered copy with a `.js` name, so the bundler can parse it, and is
+ * aliased under its specifier. Only specifiers the code imports count.
+ */
+async function virtualModules(
+  paths: WorkspacePaths,
+  moves: Map<string, string>,
+  written: Map<string, string | undefined>,
+): Promise<{ name: string; file: string; content: string }[]> {
+  const report = await readJson<{ maps: { sources: { raw: string; output: string | null }[] }[] }>(
+    paths.sourcemapsReport,
+  );
+  const imported = new Set<string>();
+  for (const text of written.values())
+    for (const m of text?.matchAll(/["'](virtual:[^"'\n]+)["']/g) ?? [])
+      imported.add(m[1] as string);
+  const out = new Map<string, { name: string; file: string; content: string }>();
+  for (const source of report?.maps.flatMap((m) => m.sources) ?? []) {
+    const name = /(?:^|\/)(virtual:[^/]+)$/.exec(source.raw)?.[1];
+    if (!name || !source.output || out.has(name) || !imported.has(name)) continue;
+    const moved = moves.get(`recovered/sourcemap/${source.output}`.toLowerCase());
+    if (!moved) continue;
+    // Without an extension it was copied as a binary file, so its text is not in `written`.
+    const content =
+      written.get(moved) ??
+      (await readFile(path.join(paths.root, moved), "utf8").catch(() => undefined));
+    if (content === undefined) continue;
+    const file = /\.[mc]?[jt]sx?$/i.test(moved) ? moved : `${moved}.js`;
+    out.set(name, { name, file, content });
+  }
+  return [...out.values()];
 }
 
 async function writeAgentFiles(paths: WorkspacePaths, facts: AgentFacts): Promise<void> {

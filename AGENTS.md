@@ -8,7 +8,7 @@ s2s (Site-to-Source) is a TypeScript CLI that turns a live URL into a buildable 
 
 ## Stack
 
-- Node 22+ (develop on 24 LTS), ESM only, TypeScript `strict` with `module: NodeNext`
+- Node 22.15+ (develop on 24 LTS; `node:sqlite` and zstd need 22.15), ESM only, TypeScript `strict` with `module: NodeNext`
 - pnpm workspaces (`packages/*`), version pinned via `packageManager`
 - tsup bundles each package's JS; `tsc` emits declarations, because TypeScript 7 has no JS compiler API and tsup's `dts` option fails with it
 - Biome for lint and format, Vitest for tests, Changesets for releases

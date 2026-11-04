@@ -3,5 +3,27 @@
   "version": "0.0.0",
   "private": true,
   "license": "MIT",
-  "type": "module"
+  "type": "module",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "s2s-fingerprints": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsup && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@rosdal/s2s-core": "workspace:*",
+    "esbuild": "^0.28.2",
+    "oxc-minify": "^0.157.0",
+    "oxc-parser": "^0.157.0",
+    "terser": "^5.51.2",
+    "xxhash-wasm": "^1.1.0"
+  }
 }

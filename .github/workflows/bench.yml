@@ -1,0 +1,85 @@
+name: Benchmark
+
+# The fingerprint benchmark. Pull requests run a small subset against an index built from a few
+# light packages; the nightly run uses the published index and every build configuration. Both
+# fail when a metric drops more than 2 points below the committed results.
+
+on:
+  pull_request:
+  schedule:
+    - cron: "41 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  SUBSET: clsx,dayjs,zustand,nanoid,mitt,immer,dompurify,js-cookie,eventemitter3,@floating-ui/core,@floating-ui/dom
+
+jobs:
+  subset:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @rosdal/s2s-core --filter @rosdal/s2s-fingerprints run build
+      - uses: actions/cache@v5
+        with:
+          path: .fingerprint-cache
+          key: bench-subset-${{ hashFiles('packages/fingerprints/corpus/corpus.lock.json', 'packages/core/src/fingerprint/normalize.ts', 'packages/fingerprints/src/**') }}
+          restore-keys: bench-subset-
+      - name: Build the subset index
+        run: |
+          node packages/fingerprints/dist/cli.js build --packages "$SUBSET"
+          node packages/fingerprints/dist/cli.js merge --out bench/.work/subset.sqlite --packages "$SUBSET"
+      - name: Run the subset benchmark
+        run: >
+          node bench/run.mjs --index bench/.work/subset.sqlite --pool "$SUBSET" --apps 4 --seed 1
+          --builds esbuild,heldout --out bench/.work/results-ci.json --compare bench/results-ci.json
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: bench-subset
+          path: bench/.work/results-ci*.json
+
+  nightly:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Pull the published index
+        env:
+          S2S_CACHE_DIR: ${{ runner.temp }}/s2s
+          GITHUB_TOKEN: ${{ github.token }}
+        run: pnpm exec s2s db pull || { echo "::notice::No fingerprint release yet; nothing to benchmark."; echo "NO_INDEX=1" >> "$GITHUB_ENV"; }
+      - name: Run the full benchmark
+        if: env.NO_INDEX != '1'
+        env:
+          S2S_CACHE_DIR: ${{ runner.temp }}/s2s
+        run: >
+          node bench/run.mjs --index "$(ls $S2S_CACHE_DIR/fingerprints/fingerprints-*.sqlite | tail -1)"
+          --apps 30 --seed 1 --out bench/.work/results.json --compare bench/results.json
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: bench-nightly
+          path: bench/.work/results*.json

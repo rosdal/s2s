@@ -17,13 +17,21 @@ import { ByteIndex, type Evidence } from "./evidence.js";
  *   CommonJS wrapper), and the range is that module
  * - `banner-to-boundary`: a banner at the top level of a scope-hoisted bundle, up to the next
  *   banner or module; less certain, since nothing marks where the package's code ends
+ * - `fingerprint`: a run of functions the fingerprint index attributes to the package; the
+ *   edges are the outermost matched functions, so glue code between runs may stay behind
  */
-export type RangeMethod = "sourcemap" | "cdn-file" | "module" | "banner-to-boundary";
+export type RangeMethod =
+  | "sourcemap"
+  | "cdn-file"
+  | "module"
+  | "banner-to-boundary"
+  | "fingerprint";
 const PRIORITY: Record<RangeMethod, number> = {
   sourcemap: 0,
   "cdn-file": 1,
   module: 2,
   "banner-to-boundary": 3,
+  fingerprint: 4,
 };
 
 export interface ModuleRef {
@@ -344,6 +352,8 @@ export interface RangeInput {
   evidence: Evidence[];
   /** Packages whose code may be dropped, with the version they resolved to. */
   accepted: Map<string, string | null>;
+  /** Fingerprint matches by body hash (string indices). */
+  fingerprints?: Map<string, { package: string; start: number; end: number; evidence: string }[]>;
 }
 
 /**
@@ -354,6 +364,7 @@ export interface RangeInput {
  */
 export async function vendorRanges(input: RangeInput): Promise<BundleRanges[]> {
   const { ctx, evidence, accepted } = input;
+  const fingerprints = input.fingerprints ?? new Map();
   const mapFor = await mapLoader(ctx);
   const out: BundleRanges[] = [];
   for (const asset of ctx.assets) {
@@ -461,6 +472,19 @@ export async function vendorRanges(input: RangeInput): Promise<BundleRanges[]> {
           evidence: [item.id],
         });
       }
+    }
+
+    for (const range of fingerprints.get(asset.hash) ?? []) {
+      if (!accepted.has(range.package)) continue;
+      candidates.push({
+        package: range.package,
+        version: accepted.get(range.package) ?? null,
+        start: range.start,
+        end: range.end,
+        method: "fingerprint",
+        module: null,
+        evidence: [range.evidence],
+      });
     }
 
     if (candidates.length === 0) continue;

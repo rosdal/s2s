@@ -562,6 +562,7 @@ async function capturePage(input: {
       else warn(`${url}: no server-rendered HTML was available`);
       dom = await page.content();
       await writeFile(path.join(pageDir, "dom.html"), dom);
+      await writeFile(path.join(pageDir, `dom.${viewport}.html`), dom);
       const meta = await page.evaluate(() => ({
         title: document.title,
         tags: [...document.querySelectorAll("link, script")].map((el) => ({
@@ -587,6 +588,12 @@ async function capturePage(input: {
       links = await page
         .$$eval("a[href]", (anchors) => anchors.map((a) => (a as HTMLAnchorElement).href))
         .catch(() => []);
+    } else {
+      // Other viewports keep their own DOM: a responsive app renders a different tree on each.
+      const pageDir = path.join(input.paths.pages, slug);
+      await mkdir(pageDir, { recursive: true });
+      dom = await page.content();
+      await writeFile(path.join(pageDir, `dom.${viewport}.html`), dom);
     }
 
     const probe = (await page.evaluate(RUNTIME_PROBE).catch((error: Error) => ({

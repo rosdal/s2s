@@ -41,7 +41,10 @@ export async function fetchTarball(options: {
   const cached = await readFile(file).catch(() => undefined);
   if (cached && checkIntegrity(cached, options.integrity)) return cached;
   const doFetch = options.fetch ?? ((url, init) => fetch(url, init));
-  const res = await doFetch(options.url, options.signal ? { signal: options.signal } : {});
+  // A deadline, so one stalled download cannot hang a build job.
+  const res = await doFetch(options.url, {
+    signal: options.signal ?? AbortSignal.timeout(300_000),
+  });
   if (!res.ok) throw new TarballError(`GET ${options.url} returned ${res.status}`);
   const bytes = new Uint8Array(await res.arrayBuffer());
   if (!checkIntegrity(bytes, options.integrity))

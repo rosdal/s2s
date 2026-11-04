@@ -123,6 +123,14 @@ async function search(
   return out;
 }
 
+/**
+ * Gives every registry request a deadline (the response body included): a stalled connection
+ * must not hang a CI job for hours.
+ */
+export function withTimeout(f: Fetch, ms = 60_000): Fetch {
+  return (url, init) => f(url, { ...init, signal: init?.signal ?? AbortSignal.timeout(ms) });
+}
+
 async function retry(fn: () => Promise<Response>, attempts = 4): Promise<Response> {
   for (let i = 0; ; i++) {
     try {
@@ -143,7 +151,7 @@ export async function fetchCandidates(options: {
   fetch?: Fetch;
   pagesPerQuery?: number;
 }): Promise<Candidate[]> {
-  const doFetch = options.fetch ?? ((url, init) => fetch(url, init));
+  const doFetch = withTimeout(options.fetch ?? ((url, init) => fetch(url, init)));
   const found = new Map<string, Candidate>();
   const add = (name: string, weekly: number, source: Candidate["source"]) => {
     const known = found.get(name);
@@ -306,7 +314,7 @@ export async function lockCorpus(options: {
   fetch?: Fetch;
   onProgress?: (message: string) => void;
 }): Promise<CorpusLock> {
-  const doFetch = options.fetch ?? ((url, init) => fetch(url, init));
+  const doFetch = withTimeout(options.fetch ?? ((url, init) => fetch(url, init)));
   const now = options.now ?? new Date();
   const packages: LockedPackage[] = [];
   // Allowlisted ecosystems are always in; search hits fill the remaining places by downloads.

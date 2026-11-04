@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { cacheRoot, fingerprintDir, IndexWriter, OVERLAY_FILE } from "@rosdal/s2s-core/fingerprint";
 import { buildVersion, type CorpusVersion, type VersionResult } from "./build.js";
-import { fetchPackument, selectVersions, tarballUrl } from "./corpus.js";
+import { fetchPackument, selectVersions, tarballUrl, withTimeout } from "./corpus.js";
 import { type Fetch, unpackTarball } from "./tarball.js";
 
 export interface LocalBuildOptions {
@@ -63,7 +63,7 @@ function splitSpec(spec: string): { name: string; range: string | null } {
 export async function buildLocal(options: LocalBuildOptions): Promise<LocalBuildResult> {
   const out = options.out ?? path.join(fingerprintDir(), OVERLAY_FILE);
   const cacheDir = options.cacheDir ?? path.join(cacheRoot(), "fingerprint-build");
-  const doFetch: Fetch = options.fetch ?? ((url, init) => fetch(url, init));
+  const doFetch: Fetch = withTimeout(options.fetch ?? ((url, init) => fetch(url, init)));
   const progress = options.onProgress ?? (() => {});
   const results: VersionResult[] = [];
 

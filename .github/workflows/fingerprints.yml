@@ -55,6 +55,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter "@rosdal/s2s-fingerprints..." run build
       - name: Refresh the corpus
+        # The temporary branch run builds the committed corpus.lock.json as is.
+        if: github.event_name != 'push'
         run: |
           node packages/fingerprints/dist/cli.js candidates
           node packages/fingerprints/dist/cli.js lock --limit 1000

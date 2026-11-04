@@ -11,6 +11,16 @@ import {
   WorkspaceError,
 } from "@rosdal/s2s-core";
 import { defineCommand, type ParsedArgs } from "citty";
+import {
+  columns,
+  createTheme,
+  ownStage,
+  type StageReporter,
+  surfaceOf,
+  symbols,
+  type Theme,
+  truncate,
+} from "../ui.js";
 import type { CliIO } from "./capture.js";
 
 export const detectArgs = {
@@ -63,7 +73,7 @@ export function detectCommand(io: CliIO, setExitCode: (code: number) => void) {
 }
 
 /** The stage as a function of its parsed flags, for `s2s grab` to run in sequence. */
-export function detectRunner(io: CliIO) {
+export function detectRunner(io: CliIO, shared?: StageReporter) {
   return runDetect;
 
   async function runDetect(args: ParsedArgs<typeof detectArgs>): Promise<number> {
@@ -81,28 +91,35 @@ export function detectRunner(io: CliIO) {
       return 2;
     }
 
+    const own = shared || args.json || args.explain ? undefined : ownStage(io, "detect");
+    const stage = shared ?? own?.stage;
+    const t = surfaceOf(io).theme;
     const controller = new AbortController();
     const removeHandler = io.onInterrupt(() => controller.abort(new Error("Interrupted")));
-    const quiet = Boolean(args.json || args.explain);
     const onProgress = (event: DetectProgress) => {
-      if (quiet && event.kind !== "warning") return;
+      if (event.kind === "warning" && !stage && !args.json) {
+        io.stderr(`${t.warn(symbols.warning)} ${t.muted(event.message)}`);
+        return;
+      }
+      if (!stage) return;
       switch (event.kind) {
         case "start":
-          io.stderr(`Detecting packages in ${event.workspace}`);
-          break;
-        case "skip":
-          io.stderr(
-            `Nothing to do: ${event.reason} in ${event.workspace}. Use --force to rebuild.`,
+          stage.detail(
+            args.offline ? "weighing the evidence" : "weighing the evidence, checking the registry",
+            `Detecting packages in ${event.workspace}`,
           );
           break;
         case "warning":
-          if (!args.json) io.stderr(`  warning: ${event.message}`);
+          stage.warn(event.message);
           break;
         case "install":
-          io.stderr(`Installing with ${event.manager} (scripts disabled) in ${event.dir}`);
+          stage.detail(
+            `installing with ${event.manager} ${t.dim("· scripts disabled")}`,
+            `Installing with ${event.manager} (scripts disabled) in ${event.dir}`,
+          );
           break;
         case "done":
-          io.stderr(`Detect ${event.status}: ${event.summary}`);
+          if (event.status === "complete") stage.done(event.summary);
           break;
       }
     };
@@ -132,84 +149,125 @@ export function detectRunner(io: CliIO) {
           io.stderr(`Detect ${result.status}: ${result.error ?? ""}`);
         const explanation = await explain(result.workspace, args.explain);
         if (args.json) io.stdout(JSON.stringify(explanation, null, 2));
-        else for (const line of explanationLines(explanation)) io.stdout(line);
+        else for (const line of explanationLines(explanation, t)) io.stdout(line);
         return explanation.record || explanation.evidence.length > 0 ? 0 : 1;
       }
       if (args.json) io.stdout(JSON.stringify(result, null, 2));
       else {
-        if (result.error) io.stderr(`  error: ${result.error}`);
-        for (const line of tableLines(result.packages)) io.stdout(line);
+        if (result.skipped) stage?.skipped(`already complete · ${result.summary}`);
+        else if (result.status === "partial") stage?.failed("interrupted");
+        else if (result.status !== "complete") stage?.failed(result.error ?? "detect failed");
         if (result.install)
-          io.stderr(
-            `Install ${result.install.exitCode === 0 ? "ok" : `failed (exit ${result.install.exitCode})`}: ${result.install.lockfile ?? "no lockfile"}`,
+          stage?.note(
+            `install ${result.install.exitCode === 0 ? "ok" : `failed (exit ${result.install.exitCode})`}: ${result.install.lockfile ?? "no lockfile"}`,
           );
+        own?.close();
+        if (!shared) {
+          io.stderr("");
+          for (const line of tableLines(result.packages, t)) io.stdout(line);
+        }
       }
       if (result.status === "partial") return 130;
       if (result.status !== "complete") return 1;
       return result.install && result.install.exitCode !== 0 ? 1 : 0;
     } catch (error) {
       if (error instanceof WorkspaceError) {
-        io.stderr(error.message);
+        if (stage) stage.failed(error.message);
+        else io.stderr(error.message);
         return 1;
       }
       throw error;
     } finally {
       removeHandler();
+      own?.close();
     }
   }
 }
 
-/** The summary table: package, version, confidence, where it went, signal types. */
-export function tableLines(rows: PackageRow[]): string[] {
-  if (rows.length === 0) return ["No packages found."];
-  const header = ["package", "version", "confidence", "status", "signals"];
-  const body = rows.map((r) => [
-    r.name,
-    r.version ?? "-",
-    r.confidence,
-    r.status,
-    r.signals.join(", ") || "implied",
-  ]);
-  const widths = header.map((h, i) =>
-    Math.max(h.length, ...body.map((row) => row[i]?.length ?? 0)),
-  );
-  const line = (cells: string[]) =>
-    cells
-      .map((c, i) => (i === cells.length - 1 ? c : c.padEnd(widths[i] ?? 0)))
-      .join("  ")
-      .trimEnd();
-  return [line(header), ...body.map(line)];
+/** Confidence in its color: high in the accent, medium in blue, low and review in amber. */
+export function confidenceText(t: Theme, confidence: string): string {
+  return confidence === "high"
+    ? t.accent(confidence)
+    : confidence === "medium"
+      ? t.info(confidence)
+      : t.warn(confidence);
 }
 
-export function explanationLines(explanation: Explanation): string[] {
+/** The summary table: package, version, confidence, where it went, signal types. */
+export function tableLines(rows: PackageRow[], t: Theme = createTheme(1)): string[] {
+  if (rows.length === 0) return ["No packages found."];
+  const header = ["package", "version", "confidence", "status", "signals"].map((h) => t.dim(h));
+  const body = rows.map((r) => {
+    const review = r.status === "review";
+    return [
+      review ? t.warn(r.name) : r.status === "rejected" ? t.dim(r.name) : r.name,
+      r.version ?? t.dim("-"),
+      confidenceText(t, r.confidence),
+      review ? t.warn(r.status) : t.muted(r.status),
+      t.dim(r.signals.join(", ") || "implied"),
+    ];
+  });
+  return columns([header, ...body]);
+}
+
+const STRENGTH_PAINT: Record<string, "accent" | "info" | "warn" | "dim"> = {
+  exact: "accent",
+  strong: "accent",
+  weak: "warn",
+  "name-only": "dim",
+};
+
+export function explanationLines(explanation: Explanation, t: Theme = createTheme(1)): string[] {
   const { record, evidence } = explanation;
   const lines: string[] = [];
   if (!record && evidence.length === 0)
     return [`No evidence for ${explanation.package} in this workspace.`];
   if (record) {
+    const tagColor =
+      record.confidence === "high" ? "accent" : record.confidence === "medium" ? "info" : "warn";
     lines.push(
-      `${record.name} ${record.version ?? "(no version)"}: ${record.confidence} confidence, ${record.status}${record.reason ? ` (${record.reason})` : ""}`,
+      `${t.bold(record.name)}  ${record.version ?? t.dim("(no version)")}  ${t.tag(tagColor, record.confidence.toUpperCase())}  ${t.dim(`${record.status} · version from ${record.versionSource}`)}`,
     );
-    lines.push(`  version source: ${record.versionSource}`);
-    if (record.impliedBy.length > 0) lines.push(`  implied by: ${record.impliedBy.join(", ")}`);
+    if (record.reason) lines.push(t.muted(record.reason));
+    const facts: [string, string][] = [];
+    if (record.impliedBy.length > 0) facts.push(["implied by", record.impliedBy.join(", ")]);
     if (record.transitiveOf.length > 0)
-      lines.push(`  dependency of: ${record.transitiveOf.join(", ")}`);
+      facts.push(["dependency of", record.transitiveOf.join(", ")]);
     if (record.disagreements.length > 0)
-      lines.push(`  other versions seen: ${record.disagreements.join(", ")}`);
+      facts.push(["other versions", record.disagreements.join(", ")]);
     if (record.registry)
-      lines.push(
-        `  registry: ${record.registry.status}${record.registry.reason ? ` (${record.registry.reason})` : ""}`,
-      );
-    if (record.vendorBytes > 0) lines.push(`  vendor bytes marked: ${record.vendorBytes}`);
+      facts.push([
+        "registry",
+        `${record.registry.status}${record.registry.reason ? ` (${record.registry.reason})` : ""}`,
+      ]);
+    if (record.vendorBytes > 0) facts.push(["vendor bytes", String(record.vendorBytes)]);
+    if (facts.length > 0) {
+      lines.push("");
+      lines.push(...columns(facts.map(([k, v]) => [t.dim(k), v])));
+    }
   }
-  lines.push(`  evidence (${evidence.length}):`);
-  for (const e of evidence) {
+  lines.push("", t.muted(`evidence (${evidence.length})`));
+  const signalWidth = Math.max(0, ...evidence.map((e) => e.signal.length)) + 2;
+  const indent = " ".repeat(signalWidth + 11);
+  evidence.forEach((e, i) => {
     const where =
       e.location.offset === null ? e.location.file : `${e.location.file} @${e.location.offset}`;
+    const paint = t[STRENGTH_PAINT[e.strength] ?? "dim"];
+    const last = i === evidence.length - 1;
+    const stem = t.rule(last ? " " : "│");
     lines.push(
-      `  - ${e.signal} [${e.strength}] ${e.version ?? "no version"} ${e.trusted ? "" : "(site text) "}in ${where}`,
+      `  ${t.rule(last ? symbols.last : symbols.branch)} ${t.muted(e.signal.padEnd(signalWidth))}${paint(e.strength.padEnd(11))}${e.version ?? t.dim("no version")}${e.trusted ? "" : t.warn("  site text")}`,
     );
-    if (e.excerpt) lines.push(`      ${e.excerpt}`);
+    lines.push(`  ${stem} ${indent}${t.dim(where)}`);
+    if (e.excerpt) lines.push(`  ${stem} ${indent}${t.dim(truncate(e.excerpt, 80))}`);
+  });
+  if (record) {
+    const pin = record.version ? `${record.name}@${record.version}` : record.name;
+    lines.push(
+      "",
+      `${t.bold("--accept")} ${pin}  ${t.dim("put it in package.json")}`,
+      `${t.bold("--reject")} ${record.name}  ${t.dim("keep it out")}`,
+    );
   }
   return lines;
 }

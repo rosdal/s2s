@@ -1,17 +1,21 @@
 import * as p from "@clack/prompts";
-import { cleanUrl, workspaceSlug } from "@rosdal/s2s-core";
+import { cleanUrl, PACKAGE_MANAGERS, workspaceSlug } from "@rosdal/s2s-core";
+import { surfaceOf } from "../ui.js";
 import type { CliIO } from "./capture.js";
 import { type GrabArgs, grabArgs, grabRunner } from "./grab.js";
 
+type Option = "crawl" | "mobile" | "install" | "auth" | "har";
+
 /** `s2s` with no arguments in a terminal: ask for the essentials, then run `s2s grab`. */
 export async function interactive(io: CliIO, version: string): Promise<number> {
-  p.intro(`s2s ${version}`);
+  const t = surfaceOf(io).theme;
+  p.intro(`${t.badge("s2s")} ${t.muted("reconstruct a site's source")} ${t.dim(`v${version}`)}`);
   const cancelled = () => {
     p.cancel("Cancelled.");
     return 130;
   };
   const url = await p.text({
-    message: "Which URL should s2s reconstruct?",
+    message: "Site URL",
     placeholder: "https://example.com",
     validate: (value) => (cleanUrl(value ?? "") ? undefined : "Enter an http(s) URL"),
   });
@@ -22,26 +26,39 @@ export async function interactive(io: CliIO, version: string): Promise<number> {
     initialValue: workspaceSlug(target),
   });
   if (p.isCancel(out)) return cancelled();
-  const viewports = await p.multiselect({
-    message: "Viewports to capture",
+  const pm = await p.select({
+    message: "Package manager",
     options: [
-      { value: "desktop", label: "desktop (1440×900)" },
-      { value: "mobile", label: "mobile (390×844)" },
+      { value: "", label: "Pick for me", hint: "the source maps' hint, else the first installed" },
+      ...PACKAGE_MANAGERS.map((name) => ({ value: name, label: name })),
     ],
-    initialValues: ["desktop", "mobile"],
-    required: true,
+    initialValue: "",
   });
-  if (p.isCancel(viewports)) return cancelled();
-  const depth = await p.select({
-    message: "Pages to capture",
+  if (p.isCancel(pm)) return cancelled();
+  const options = await p.multiselect<Option>({
+    message: "Options",
     options: [
-      { value: "0", label: "Only this page" },
-      { value: "1", label: "This page and the pages it links to" },
-      { value: "2", label: "Two levels of links" },
+      { value: "crawl", label: "Crawl linked pages", hint: "depth 1" },
+      { value: "mobile", label: "Capture a mobile viewport too", hint: "390×844" },
+      { value: "install", label: "Install dependencies", hint: "scripts disabled" },
+      { value: "auth", label: "Use a logged-in session", hint: "Playwright storage-state file" },
+      { value: "har", label: "Write a HAR file" },
     ],
-    initialValue: "0",
+    initialValues: ["mobile", "install"],
+    required: false,
   });
-  if (p.isCancel(depth)) return cancelled();
+  if (p.isCancel(options)) return cancelled();
+  const chosen = new Set(options);
+  let authState: string | undefined;
+  if (chosen.has("auth")) {
+    const file = await p.text({
+      message: "Storage-state file",
+      placeholder: "auth.json",
+      validate: (value) => (value?.trim() ? undefined : "Enter a file path"),
+    });
+    if (p.isCancel(file)) return cancelled();
+    authState = file.trim();
+  }
   const allowed = await p.confirm({
     message:
       "Do you have the right to copy this site's frontend (your own site, or permission from its owner)?",
@@ -52,7 +69,7 @@ export async function interactive(io: CliIO, version: string): Promise<number> {
     p.outro("s2s is for sites you own or may reconstruct. Nothing was captured.");
     return 1;
   }
-  p.outro("Starting s2s grab");
+  p.outro(`Starting ${t.bold("s2s grab")}`);
   // Every flag starts at its own default, so this flow never drifts from `s2s grab`.
   const defaults = Object.fromEntries(
     Object.entries(grabArgs)
@@ -64,8 +81,12 @@ export async function interactive(io: CliIO, version: string): Promise<number> {
     _: [],
     url: target.href,
     out: out || workspaceSlug(target),
-    viewports: (viewports as string[]).join(","),
-    depth: String(depth),
+    viewports: chosen.has("mobile") ? "desktop,mobile" : "desktop",
+    depth: chosen.has("crawl") ? "1" : "0",
+    install: chosen.has("install"),
+    har: chosen.has("har"),
+    ...(pm ? { pm } : {}),
+    ...(authState ? { "auth-state": authState } : {}),
   } as unknown as GrabArgs;
   return grabRunner(io, version)(args);
 }

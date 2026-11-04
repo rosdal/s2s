@@ -1,5 +1,12 @@
 # @rosdal/s2s
 
+## 0.1.1
+
+### Patch Changes
+
+- 66f0110: Fix four ways the untouched scaffold could fail to build or run, found on TodoMVC. The scaffold now copies every exact source, including CSS that the source-mapped code imports. It adds packages the recovered code imports but `package.json` lacked, such as `react-router-dom` (as an alias of `react-router` 7 and later), with a warning to confirm each one. npm installs no longer stop on peer-version conflicts between inferred versions. Stage 4 also keeps a constructor function that guards with `this instanceof` as a function, because turning it into a class broke callers that omit `new`.
+- e7e8a36: The scaffold now adds `@types/react` and `@types/react-dom` for React projects, matching the site's React major, so the agent's strict TSX typechecks without a new dependency. npm projects also get a `.npmrc` with `legacy-peer-deps=true`, so the agent's own installs get past the same peer conflicts the scaffold's install does. Both came out of the first acceptance run, on TodoMVC.
+
 ## 0.1.0
 
 ### Minor Changes

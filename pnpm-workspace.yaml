@@ -30,3 +30,13 @@ minimumReleaseAgeExclude:
   - "@oxc-minify/binding-win32-ia32-msvc@0.157.0"
   - "@oxc-minify/binding-win32-x64-msvc@0.157.0"
   - oxc-minify@0.157.0
+# Patched versions of vulnerable transitive dependencies (Dependabot). Most come from the legacy
+# webpack 4 and browserify toolchains the fixtures build with.
+overrides:
+  braces: ^3.0.3
+  micromatch: ^4.0.8
+  decode-uri-component: ^0.5.1
+  serialize-javascript: ^7.1.3
+  zod: ^4.6.6
+  "glob@^10": ^14.0.2
+  "minimatch@^9": ^11.0.1

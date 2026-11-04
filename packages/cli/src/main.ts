@@ -2,6 +2,7 @@ import { type CommandDef, defineCommand, renderUsage, runCommand } from "citty";
 import { type CliIO, captureCommand } from "./commands/capture.js";
 import { detectCommand } from "./commands/detect.js";
 import { mapsCommand } from "./commands/maps.js";
+import { unbundleCommand } from "./commands/unbundle.js";
 
 export type { CliIO };
 
@@ -30,13 +31,16 @@ export async function runCli(
   const detect = detectCommand(io, (code) => {
     exitCode = code;
   });
+  const unbundle = unbundleCommand(io, (code) => {
+    exitCode = code;
+  });
   const main = defineCommand({
     meta: {
       name: "s2s",
       version,
       description: "Turn a live URL into a buildable reconstruction of its frontend source.",
     },
-    subCommands: { capture, maps, detect },
+    subCommands: { capture, maps, detect, unbundle },
   });
 
   if (argv.length === 1 && (argv[0] === "--version" || argv[0] === "-v")) {
@@ -45,7 +49,7 @@ export async function runCli(
   }
   const help = argv.includes("--help") || argv.includes("-h");
   if (help || argv.length === 0) {
-    const subCommands = { capture, maps, detect };
+    const subCommands = { capture, maps, detect, unbundle };
     const name = argv[0] ?? "";
     // `Object.hasOwn`, so `constructor` or `toString` never count as commands.
     const sub = Object.hasOwn(subCommands, name)

@@ -36,6 +36,10 @@ Pick the package and bump type, write a one-line summary for the changelog, and 
 
 The Stage 3 tests read npm registry answers from `fixtures/registry/`. If a fixture starts naming a new package, record it with `node fixtures/registry/record.mjs <name>`.
 
+### Unbundle similarity scores
+
+Each Stage 4 fixture is scored against its own `src/`: the share of the source's top-level statements that come back in one output module, with identifiers and formatting normalized away. The scores live in `packages/core/test/__snapshots__/unbundle-similarity.json`, and the tests fail when a score drops. When a change raises a score, or a new fixture needs one, record it with `S2S_UPDATE_SIMILARITY=1 pnpm test` and commit the file.
+
 ## Ground rules
 
 - Never commit captured sites. `workspaces/` is gitignored for that reason.

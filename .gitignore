@@ -19,5 +19,5 @@ docs/design.md
 docs/todo/
 .fingerprint-cache/
 packages/fingerprints/corpus/candidates.json
-bench/.work/
+bench/.work*/
 bench/results*.details.json

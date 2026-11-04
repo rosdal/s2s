@@ -114,18 +114,8 @@ export function projectHints(
   const addStyling = (value: string, evidence: string[]) => {
     if (evidence.length > 0) styling.push({ value, confidence: 0.95, evidence: sample(evidence) });
   };
-  // A preprocessor stylesheet is often missing from every map (its CSS was extracted), but the
-  // code that imports it still says which preprocessor the build ran.
-  const importing = (re: RegExp) =>
-    sources.filter((s) => s.content && re.test(s.content)).map((s) => `${s.path} imports one`);
-  addStyling("scss", [
-    ...matching(/\.s[ac]ss$/),
-    ...importing(/(?:\bimport\s*|\bfrom\s*|@import\s+)["'][^"'\n]+\.s[ac]ss["']/),
-  ]);
-  addStyling("less", [
-    ...matching(/\.less$/),
-    ...importing(/(?:\bimport\s*|\bfrom\s*|@import\s+)["'][^"'\n]+\.less["']/),
-  ]);
+  addStyling("scss", matching(/\.s[ac]ss$/));
+  addStyling("less", matching(/\.less$/));
   addStyling("css-modules", matching(/\.module\.(?:css|s[ac]ss|less)$/));
   const tailwind = sources
     .filter(

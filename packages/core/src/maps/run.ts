@@ -30,7 +30,6 @@ import {
   type SourceKind,
   vendorPath,
 } from "./paths.js";
-import { escapeOf, inferFolderNames, placeSource, renameFolders, urlDirectory } from "./reroot.js";
 import { lineStartsOf, renameFromMap, type SkippedRename, shiftPosition } from "./rename.js";
 
 export interface MapsOptions {
@@ -85,8 +84,6 @@ interface SourceInfo {
   /** Normalized path, before the project root is cut. */
   normalized: string | null;
   absolute: boolean;
-  /** Folders above the served root the raw path climbed (see `reroot.ts`). */
-  escape: number;
   rejected?: string;
   content: string | null;
   /** Path under `recovered/sourcemap/`, once written. */
@@ -270,7 +267,6 @@ async function run(
     signal?.throwIfAborted();
     try {
       const map = loadMap(parseMapText(await text()));
-      const mapDirectory = urlDirectory(entry.mapUrl ?? entry.file);
       const sources = map.sources.map((raw, i): SourceInfo => {
         const normalized = normalizeSource(raw);
         const content = map.sourcesContent[i] ?? null;
@@ -280,7 +276,6 @@ async function run(
               kind: normalized.kind,
               normalized: normalized.path,
               absolute: normalized.absolute,
-              escape: escapeOf(normalized.climb, mapDirectory),
               content,
             }
           : {
@@ -288,7 +283,6 @@ async function run(
               kind: null,
               normalized: null,
               absolute: false,
-              escape: 0,
               rejected: normalized.reason,
               content,
             };
@@ -311,20 +305,8 @@ async function run(
   if (errors.length > 0)
     warn(`${errors.length} source map(s) were unusable; see analysis/sourcemaps.json.`);
 
-  // 2. Normalize paths: keep how deep relative sources sat, then cut the project root shared by
-  // first-party sources.
+  // 2. Normalize paths: cut the project root shared by first-party sources.
   const firstParty = loaded.flatMap((m) => m.sources).filter((s) => s.kind === "first-party");
-  const relativeFirstParty = firstParty.filter((s) => !s.absolute && s.normalized);
-  const deepest = Math.max(0, ...relativeFirstParty.map((s) => s.escape));
-  if (relativeFirstParty.some((s) => s.escape < deepest)) {
-    const placed = new Map<SourceInfo, string>();
-    for (const s of relativeFirstParty)
-      placed.set(s, placeSource(s.normalized as string, s.escape, deepest));
-    const names = inferFolderNames(
-      [...placed.entries()].map(([s, p]) => ({ path: p, content: s.content })),
-    );
-    for (const [s, p] of placed) s.normalized = renameFolders(p, names);
-  }
   const projectRoot = findProjectRoot(
     firstParty.map((s) => ({ path: s.normalized ?? "", absolute: s.absolute })),
   );

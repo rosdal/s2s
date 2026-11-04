@@ -519,6 +519,10 @@ async function run(
   // 5. Project config.
   await writeFileAtomic(path.join(paths.project, "vite.config.ts"), viteConfig(target));
   await writeFileAtomic(path.join(paths.project, "tsconfig.json"), tsconfig(target));
+  // Inferred versions often disagree on peers; every npm install in the project, the agent's
+  // included, should get past that the way the scaffold's own install does.
+  if (pm === "npm")
+    await writeFileAtomic(path.join(paths.project, ".npmrc"), "legacy-peer-deps=true\n");
   addMissingImports(pkg, graph, packagesFile, warn);
   await writeJsonAtomic(paths.packageJson, scaffoldPackageJson(pkg, target));
 

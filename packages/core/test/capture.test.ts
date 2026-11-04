@@ -404,8 +404,10 @@ describe("hostile fixture", () => {
   });
 
   test("caps interactions per page", async () => {
+    // The interact phase shares this deadline; 1 s let a slow CI runner time out before the
+    // first interaction. The cap, not the deadline, must be what stops at one.
     const { paths } = await run(server, "hostile-cap", {
-      phaseTimeoutMs: 1_000,
+      phaseTimeoutMs: 5_000,
       maxInteractions: 1,
     });
     const runtime = await readJson<{ interactions: Record<string, number> }[]>(paths.runtime);

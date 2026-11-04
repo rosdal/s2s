@@ -79,6 +79,17 @@ describe("parseBanner", () => {
     );
   });
 
+  test("a React build file inside a folder belongs to the folder's package", () => {
+    for (const file of [
+      "use-sync-external-store-shim/with-selector.production.js",
+      "use-sync-external-store-shim.production.js",
+      "use-sync-external-store-with-selector.production.js",
+    ])
+      expect(parseBanner(`/**\n * @license React\n * ${file}\n */`)).toEqual([
+        { name: "use-sync-external-store", version: null, shape: "file-name" },
+      ]);
+  });
+
   test("React 17 banners give the version to the file's package", () => {
     expect(parseBanner("/** @license React v17.0.2\n * react-dom.production.min.js */")).toEqual([
       { name: "react-dom", version: "17.0.2", shape: "file-name" },
@@ -439,6 +450,61 @@ describe("checkPackages", () => {
     expect(by.ghost?.registry).toMatchObject({ status: "failed", exists: false });
     expect(by.inner).toMatchObject({ version: "1.0.0", versionSource: "inferred" });
     expect(by.inner?.transitiveOf).toEqual(["real"]);
+  });
+
+  test("an inferred parent steps back to the release that still depended on a detected orphan", async () => {
+    // Sentry 11 renamed @sentry-internal/browser-utils; a bundle holding it is on Sentry 10.
+    const docs: Record<string, unknown> = {
+      "@s/browser": {
+        name: "@s/browser",
+        versions: {
+          "10.0.0": { dependencies: { "@s-internal/utils": "10.0.0", "@s/core": "10.0.0" } },
+          "11.0.0": { dependencies: { "@s/utils": "11.0.0", "@s/core": "11.0.0" } },
+        },
+        time: { "10.0.0": "2025-01-01T00:00:00Z", "11.0.0": "2025-06-01T00:00:00Z" },
+      },
+      "@s-internal/utils": {
+        name: "@s-internal/utils",
+        versions: { "10.0.0": { dependencies: { "@s/core": "10.0.0" } } },
+        time: { "10.0.0": "2025-01-01T01:00:00Z" },
+      },
+      "@s/core": {
+        name: "@s/core",
+        versions: { "10.0.0": {}, "11.0.0": {} },
+        time: { "10.0.0": "2025-01-01T00:00:00Z", "11.0.0": "2025-06-01T00:00:00Z" },
+      },
+      clsx: {
+        name: "clsx",
+        versions: { "2.0.0": {} },
+        time: { "2.0.0": "2025-03-01T00:00:00Z" },
+      },
+    };
+    const fetchDocs: FetchLike = async (url) => {
+      if (url.includes("downloads")) return Response.json({ downloads: 50_000 });
+      const name = decodeURIComponent(url.split("/").at(-1) ?? "");
+      const doc = docs[name];
+      return doc ? Response.json(doc) : new Response("{}", { status: 404 });
+    };
+    const path_ = (id: string, name: string) =>
+      ev({ id, package: name, signal: "sourcemap-path", strength: "strong", trusted: true });
+    const merged = mergeEvidence([
+      path_("a", "@s/browser"),
+      path_("b", "@s-internal/utils"),
+      path_("c", "@s/core"),
+      path_("d", "clsx"),
+    ]);
+    await checkPackages(merged, {
+      registry: new Registry({ cacheDir: path.join(tmp, "lockstep"), fetch: fetchDocs }),
+      popularityFloor: 1000,
+      cutoffOf: () => new Date("2025-12-01T00:00:00Z"),
+      warn: () => {},
+    });
+    const by = Object.fromEntries(merged.map((p) => [p.name, p]));
+    expect(by["@s/browser"]?.version).toBe("10.0.0");
+    expect(by["@s/core"]?.version).toBe("10.0.0");
+    expect(by["@s-internal/utils"]?.transitiveOf).toEqual(["@s/browser"]);
+    // An unrelated orphan released months apart from any parent moves nothing.
+    expect(by.clsx?.version).toBe("2.0.0");
   });
 
   test("offline, nothing is fetched; untrusted names fail and trusted ones are skipped", async () => {

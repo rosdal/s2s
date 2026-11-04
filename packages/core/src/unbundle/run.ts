@@ -179,7 +179,11 @@ export function summaryLine(stats: Record<string, number>, bundler: string): str
   const pct =
     n("totalBytes") === 0 ? 0 : Math.round((n("vendorDroppedBytes") / n("totalBytes")) * 100);
   const version = stats.bundlerVersion ? ` ${stats.bundlerVersion}` : "";
-  return `${bundler}${version} · ${plural(n("modules"), "module")} · ${pct}% vendor dropped · ${plural(n("groups"), "group")}`;
+  // Exact sources from maps are modules too; Stage 5 counts both, so the total has to match it.
+  const total = n("modules") + n("exactModules");
+  const split =
+    n("exactModules") > 0 ? ` (${n("exactModules")} from source maps, ${n("modules")} split)` : "";
+  return `${bundler}${version} · ${plural(total, "module")}${split} · ${pct}% vendor dropped · ${plural(n("groups"), "group")}`;
 }
 
 interface Outcome {

@@ -21,6 +21,7 @@ import {
   share,
 } from "./coverage.js";
 import { projectHints } from "./hints.js";
+import { type InlinedFile, recoverInlined } from "./inlined.js";
 import { inlineMap, type LogicalMap, loadMap, MapError, parseMapText } from "./load.js";
 import { detectPackageManager, type PackageLayout, parseVendorPath } from "./packages.js";
 import {
@@ -31,6 +32,7 @@ import {
   vendorPath,
 } from "./paths.js";
 import { lineStartsOf, renameFromMap, type SkippedRename, shiftPosition } from "./rename.js";
+import { escapeOf, inferFolderNames, placeSource, renameFolders, urlDirectory } from "./reroot.js";
 
 export interface MapsOptions {
   /** Workspace folder written by `s2s capture`. */
@@ -84,6 +86,8 @@ interface SourceInfo {
   /** Normalized path, before the project root is cut. */
   normalized: string | null;
   absolute: boolean;
+  /** Folders above the served root the raw path climbed (see `reroot.ts`). */
+  escape: number;
   rejected?: string;
   content: string | null;
   /** Path under `recovered/sourcemap/`, once written. */
@@ -267,6 +271,7 @@ async function run(
     signal?.throwIfAborted();
     try {
       const map = loadMap(parseMapText(await text()));
+      const mapDirectory = urlDirectory(entry.mapUrl ?? entry.file);
       const sources = map.sources.map((raw, i): SourceInfo => {
         const normalized = normalizeSource(raw);
         const content = map.sourcesContent[i] ?? null;
@@ -276,6 +281,7 @@ async function run(
               kind: normalized.kind,
               normalized: normalized.path,
               absolute: normalized.absolute,
+              escape: escapeOf(normalized.climb, mapDirectory),
               content,
             }
           : {
@@ -283,6 +289,7 @@ async function run(
               kind: null,
               normalized: null,
               absolute: false,
+              escape: 0,
               rejected: normalized.reason,
               content,
             };
@@ -305,8 +312,20 @@ async function run(
   if (errors.length > 0)
     warn(`${errors.length} source map(s) were unusable; see analysis/sourcemaps.json.`);
 
-  // 2. Normalize paths: cut the project root shared by first-party sources.
+  // 2. Normalize paths: keep how deep relative sources sat, then cut the project root shared by
+  // first-party sources.
   const firstParty = loaded.flatMap((m) => m.sources).filter((s) => s.kind === "first-party");
+  const relativeFirstParty = firstParty.filter((s) => !s.absolute && s.normalized);
+  const deepest = Math.max(0, ...relativeFirstParty.map((s) => s.escape));
+  if (relativeFirstParty.some((s) => s.escape < deepest)) {
+    const placed = new Map<SourceInfo, string>();
+    for (const s of relativeFirstParty)
+      placed.set(s, placeSource(s.normalized as string, s.escape, deepest));
+    const names = inferFolderNames(
+      [...placed.entries()].map(([s, p]) => ({ path: p, content: s.content })),
+    );
+    for (const [s, p] of placed) s.normalized = renameFolders(p, names);
+  }
   const projectRoot = findProjectRoot(
     firstParty.map((s) => ({ path: s.normalized ?? "", absolute: s.absolute })),
   );
@@ -316,6 +335,28 @@ async function run(
   const byPath = new Map<string, { contentHash: string; output: string; from: string[] }[]>();
   const rejected: { file: string; source: string; reason: string }[] = [];
   let written = 0;
+  // Captured asset bodies by file name, and by file name without a bundler hash.
+  const assetBodies = new Map<string, string | null>();
+  for (const record of records) {
+    if (!record.bodyHash || record.status < 200 || record.status >= 300) continue;
+    const name = record.url
+      .replace(/[?#].*$/, "")
+      .split("/")
+      .pop()
+      ?.toLowerCase();
+    if (!name || !ASSET_FILE.test(name)) continue;
+    for (const key of new Set([name, withoutHash(name)])) {
+      const seen = assetBodies.get(key);
+      // Two different files under one name cannot tell which one a source was.
+      assetBodies.set(key, seen === undefined || seen === record.bodyHash ? record.bodyHash : null);
+    }
+  }
+  const capturedAsset = (file: string) => {
+    const name = (file.split("/").pop() ?? "").toLowerCase();
+    return assetBodies.get(name) ?? assetBodies.get(withoutHash(name)) ?? undefined;
+  };
+  const assetsFilled: string[] = [];
+  const assetsMissing: string[] = [];
   for (const map of loaded) {
     for (const source of map.sources) {
       if (source.rejected) {
@@ -329,7 +370,14 @@ async function run(
           : source.kind === "vendor"
             ? `_vendor/${vendorPath(source.normalized)}`
             : projectPath(projectRoot, source);
-      const contentHash = sha256(source.content);
+      // Vite's map holds an asset's intermediate module, not its bytes; the capture may have them.
+      let bytes: Buffer | string = source.content;
+      if (VITE_ASSET.test(source.content) && ASSET_FILE.test(base)) {
+        const hash = capturedAsset(base);
+        bytes = hash ? await readFile(path.join(paths.bodies, hash)) : Buffer.alloc(0);
+        (hash ? assetsFilled : assetsMissing).push(base);
+      }
+      const contentHash = typeof bytes === "string" ? sha256(bytes) : BodyStore.hash(bytes);
       // Keyed case-insensitively: `App.js` and `app.js` are one file on Windows and macOS.
       const key = base.toLowerCase();
       const variants = byPath.get(key) ?? [];
@@ -352,7 +400,7 @@ async function run(
       }
       try {
         await mkdir(path.dirname(file), { recursive: true });
-        await writeFile(file, source.content, { flag: "wx" });
+        await writeFile(file, bytes, { flag: "wx" });
       } catch (error) {
         // A path that clashes with a folder or file already written (`src/utils` and
         // `src/utils/index.js`), or that the file system refuses, skips this source only.
@@ -374,9 +422,46 @@ async function run(
     .map(([key, variants]) => ({ path: variants[0]?.output ?? key, variants }));
   if (rejected.length > 0)
     warn(`${rejected.length} source path(s) rejected; see analysis/sourcemaps.json.`);
+  if (assetsMissing.length > 0)
+    warn(
+      `${assetsMissing.length} asset source(s) held only Vite's placeholder and were not captured (${assetsFilled.length} were); they are written empty.`,
+    );
   if (conflicts.length > 0)
     warn(
       `${conflicts.length} source path(s) had different content in different maps; kept every version.`,
+    );
+
+  // 3b. Data the bundle inlined without mappings (JSON imports, tree-shaken namespaces).
+  const known = new Set([...byPath.values()].flat().map((v) => v.output.toLowerCase()));
+  const inlined: InlinedFile[] = [];
+  for (const map of loaded) {
+    signal?.throwIfAborted();
+    if (!map.generatedHash) continue;
+    const sources = map.sources
+      .map((s, index) => ({ s, index }))
+      .filter(({ s }) => s.kind === "first-party" && s.output && s.content)
+      .map(({ s, index }) => ({ index, output: s.output as string, content: s.content as string }));
+    if (sources.length === 0) continue;
+    const code = await readBody(map.generatedHash).catch(() => undefined);
+    if (code === undefined) continue;
+    for (const file of recoverInlined(map.map, code, sources, known)) {
+      const target = path.resolve(outDir, file.path);
+      if (!target.startsWith(outDir + path.sep)) continue;
+      try {
+        await mkdir(path.dirname(target), { recursive: true });
+        await writeFile(target, file.content, { flag: "wx" });
+      } catch {
+        continue;
+      }
+      known.add(file.path.toLowerCase());
+      inlined.push(file);
+    }
+  }
+  if (inlined.length > 0)
+    warn(
+      `Rebuilt ${inlined.length} module(s) the bundle inlined without mappings (${inlined
+        .map((f) => posixBase(f.path))
+        .join(", ")}); see analysis/sourcemaps.json.`,
     );
 
   // 4. Package evidence from vendor paths.
@@ -583,6 +668,8 @@ async function run(
     errors,
     rejected,
     conflicts,
+    inlined: inlined.map(({ content: _, ...rest }) => rest),
+    assetPlaceholders: { filled: assetsFilled, missing: assetsMissing },
     renamed: renamedChunks,
     coverage: {
       overall: { ...totals.all, share: share(totals.all) },
@@ -602,6 +689,9 @@ async function run(
       .filter((v) => !/^_(?:virtual|vendor)\//.test(v.output)).length,
     rejected: rejected.length,
     conflicts: conflicts.length,
+    inlinedRecovered: inlined.length,
+    assetsFromCapture: assetsFilled.length,
+    assetsMissing: assetsMissing.length,
     packages: packages.size,
     renamedChunks: renamedBodies.size,
     renamedBindings: renamedChunks.reduce((n, c) => n + c.renamed, 0),
@@ -622,6 +712,15 @@ function projectPath(
 ): string {
   return relativeTo(source.absolute ? root.absolute : root.relative, source.normalized ?? "");
 }
+
+/** Vite's stand-in module for an imported asset, which its maps keep as the asset's content. */
+const VITE_ASSET = /^\s*export default\s*["']__VITE_ASSET__[\w$]+__["'];?\s*$/;
+const ASSET_FILE =
+  /\.(?:woff2?|ttf|otf|eot|png|jpe?g|gif|webp|avif|ico|bmp|mp3|mp4|webm|ogg|wav|wasm)$/i;
+/** `font-a88b72a2.woff2` gives `font.woff2`: the name before the bundler appended its hash. */
+const withoutHash = (name: string) => name.replace(/-[A-Za-z0-9_-]{8}(\.[a-z0-9]+)$/i, "$1");
+
+const posixBase = (file: string) => file.slice(file.lastIndexOf("/") + 1);
 
 function withSuffix(file: string, suffix: string): string {
   const slash = file.lastIndexOf("/");

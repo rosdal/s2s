@@ -146,12 +146,20 @@ export function captureRunner(io: CliIO, version: string) {
     let lastStats = { requests: 0, bytesStored: 0, chunksDiscovered: 0, mapsFound: 0 };
     const statsLine = () =>
       `requests ${lastStats.requests} · stored ${formatBytes(lastStats.bytesStored)} · chunks discovered ${lastStats.chunksDiscovered} · maps ${lastStats.mapsFound}`;
+    // A phase line is printed when the phase ends, so its numbers are what that phase fetched; a
+    // warning flushes it early so the line still comes before what happened during it.
+    let pending: string | null = null;
+    const flush = () => {
+      if (pending !== null) io.stderr(`${pending} ${statsLine()}`);
+      pending = null;
+    };
     const onProgress = (event: CaptureProgress) => {
       if (event.kind === "stats") {
         lastStats = event;
         return;
       }
       if (args.json) return;
+      if (event.kind !== "phase") flush();
       switch (event.kind) {
         case "start":
           io.stderr(`Capturing ${event.url}\n  into ${event.workspace}`);
@@ -163,7 +171,8 @@ export function captureRunner(io: CliIO, version: string) {
           break;
         case "phase": {
           const where = [event.viewport, event.page].filter(Boolean).join(" ");
-          io.stderr(`  ${event.phase.padEnd(8)} ${where.padEnd(28)} ${statsLine()}`);
+          flush();
+          pending = `  ${event.phase.padEnd(8)} ${where.padEnd(28)}`;
           break;
         }
         case "warning":
@@ -219,6 +228,7 @@ export function captureRunner(io: CliIO, version: string) {
       }
       throw error;
     } finally {
+      flush();
       removeHandler();
     }
   }

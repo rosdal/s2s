@@ -98,7 +98,15 @@ export function grabRunner(io: CliIO, version: string) {
     }
 
     let verifyCode: number | null = null;
-    if (args.verify !== false) {
+    // Verify would build the same project again and print the same errors a second time.
+    const manifest = await readManifest(workspacePaths(workspace).manifest).catch(() => undefined);
+    const scaffoldBuild = manifest?.stages.scaffold.details?.build;
+    if (args.verify !== false && scaffoldBuild === "failed") {
+      io.stderr(
+        "\nSkipping the baseline check: the untouched scaffold does not build (analysis/scaffold-build.log).",
+      );
+      verifyCode = 2;
+    } else if (args.verify !== false) {
       io.stderr("\nChecking the untouched scaffold against the capture");
       verifyCode = await verifyRunner(io)({ _: [], workspace, json: false } as never);
     }

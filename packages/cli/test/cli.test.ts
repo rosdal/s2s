@@ -252,7 +252,7 @@ describe("s2s unbundle", () => {
     const first = io();
     expect(await runCli(["unbundle", out], "0.0.0", first.cliIO)).toBe(0);
     expect(first.err.join("\n")).toMatch(
-      /Unbundle complete: \w+ · \d+ modules? · \d+% vendor dropped · \d+ groups?/,
+      /Unbundle complete: \w+ · \d+ modules?(?: \(\d+ from source maps, \d+ split\))? · \d+% vendor dropped · \d+ groups?/,
     );
     const modules = JSON.parse(await readFile(path.join(out, "analysis", "modules.json"), "utf8"));
     expect(modules.modules.length).toBeGreaterThan(0);

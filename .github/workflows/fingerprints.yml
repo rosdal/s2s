@@ -6,13 +6,6 @@ name: Fingerprints
 # label (the homelab fallback).
 
 on:
-  # TEMPORARY: runs the first build from this branch. Remove before merge.
-  push:
-    branches: [feat/fingerprints]
-    paths:
-      - .github/workflows/fingerprints.yml
-      - packages/fingerprints/src/**
-      - packages/core/src/fingerprint/**
   schedule:
     - cron: "17 3 * * 1"
   workflow_dispatch:

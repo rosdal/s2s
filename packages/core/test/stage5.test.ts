@@ -11,7 +11,7 @@ import { detect } from "../src/detect/run.js";
 import { maps } from "../src/maps/run.js";
 import { scaffold } from "../src/scaffold/run.js";
 import { unbundle } from "../src/unbundle/run.js";
-import type { Rect } from "../src/verify/image.js";
+import { decodePng, encodePng, type Rect } from "../src/verify/image.js";
 import { verify } from "../src/verify/run.js";
 import { type FixtureName, serveFixture } from "./helpers/fixtures.js";
 
@@ -291,7 +291,16 @@ describe("dynamic mask", () => {
     expect(masked.report?.checks[0]?.reasons).toEqual([]);
     expect(masked.exitCode).toBe(0);
 
-    // Without the mask the same page fails: the mask is what keeps it green.
+    // Make the masked area of the baseline something no slide ever shows. Verify still passes with
+    // the mask, and fails without it: the mask is what keeps the page green.
+    const shotFile = path.join(dir, "raw/screenshots/index/desktop.png");
+    const shot = decodePng(await readFile(shotFile));
+    const carousel = mask.reduce((a, b) => (b.width * b.height > a.width * a.height ? b : a));
+    for (let y = carousel.y; y < Math.min(shot.height, carousel.y + carousel.height); y++)
+      for (let x = carousel.x; x < Math.min(shot.width, carousel.x + carousel.width); x++)
+        shot.data.set([0, 0, 0, 255], (y * shot.width + x) * 4);
+    await writeFile(shotFile, encodePng(shot));
+    expect((await verify({ workspace: dir, quietMs: 300, build: false })).exitCode).toBe(0);
     await rm(path.join(dir, "raw/screenshots/index/desktop.mask.json"));
     const unmasked = await verify({ workspace: dir, quietMs: 300, build: false });
     expect(unmasked.exitCode).toBe(1);

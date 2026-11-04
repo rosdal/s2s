@@ -5,9 +5,7 @@ const carousel = document.getElementById("carousel");
 
 function tick() {
   const now = Date.now();
-  // The last four digits of the time in ms: all four change between shots a second apart, and
-  // at this size they cover well over 2% of the page, so an unmasked compare always fails.
-  clock.textContent = String(now % 10_000).padStart(4, "0");
+  clock.textContent = String(now);
   // A new slide every 700 ms, so two screenshots a second or more apart never show the same one.
   carousel.style.background = slides[Math.floor(now / 700) % slides.length];
 }

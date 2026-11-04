@@ -220,7 +220,7 @@ export async function fetchPackument(
   cacheDir: string,
   doFetch: Fetch,
 ): Promise<Packument | undefined> {
-  const file = path.join(cacheDir, "packuments", `${name.replace("/", "+")}.json.gz`);
+  const file = path.join(cacheDir, "packuments", `${name.replaceAll("/", "+")}.json.gz`);
   try {
     const cached = JSON.parse(gunzipSync(await readFile(file)).toString("utf8")) as {
       at: number;
@@ -230,7 +230,11 @@ export async function fetchPackument(
   } catch {
     // Not cached.
   }
-  const res = await retry(() => doFetch(`${REGISTRY}/${name.replace("/", "%2f")}`));
+  // `@scope/name` becomes `@scope%2fname`; everything else in the name is encoded too.
+  const encoded = name.startsWith("@")
+    ? `@${encodeURIComponent(name.slice(1))}`
+    : encodeURIComponent(name);
+  const res = await retry(() => doFetch(`${REGISTRY}/${encoded}`));
   if (res.status === 404) return undefined;
   if (!res.ok) throw new Error(`GET ${name} returned ${res.status}`);
   const full = (await res.json()) as Packument;

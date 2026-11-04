@@ -63,7 +63,7 @@ export interface VersionResult {
 }
 
 export function resultPath(cacheDir: string, name: string, version: string): string {
-  return path.join(cacheDir, "results", `${name.replace("/", "+")}@${version}.json`);
+  return path.join(cacheDir, "results", `${name.replaceAll("/", "+")}@${version}.json`);
 }
 
 /** A cached result, when it was built by this builder and normalizer. */

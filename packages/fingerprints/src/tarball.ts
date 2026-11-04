@@ -36,7 +36,7 @@ export async function fetchTarball(options: {
   const file = path.join(
     options.cacheDir,
     "tarballs",
-    `${options.name.replace("/", "+")}-${options.version}.tgz`,
+    `${options.name.replaceAll("/", "+")}-${options.version}.tgz`,
   );
   const cached = await readFile(file).catch(() => undefined);
   if (cached && checkIntegrity(cached, options.integrity)) return cached;

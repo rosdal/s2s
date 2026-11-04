@@ -88,6 +88,13 @@ export function unbundleRunner(io: CliIO, shared?: StageReporter) {
         case "start":
           stage.detail("reading bundles", `Unbundling ${event.workspace}`);
           break;
+        case "chunk": {
+          if (event.total === 0) break;
+          const counts = `splitting ${event.done}/${event.total} chunks`;
+          // Off a terminal, one line per chunk would flood the log; the module count says enough.
+          stage.detail(`${bar(t, event.done / event.total, 24, t.info)}  ${counts}`, null);
+          break;
+        }
         case "module": {
           if (event.total === 0) break;
           const counts = `${event.done}/${event.total} modules`;

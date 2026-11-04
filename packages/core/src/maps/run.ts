@@ -11,7 +11,7 @@ import {
 import { assetKind } from "../capture/recorder.js";
 import { type RequestRecord, readRequestLog } from "../capture/request-log.js";
 import { type WorkspacePaths, workspacePaths } from "../capture/workspace.js";
-import { writeJsonAtomic } from "../fs-util.js";
+import { breathe, writeJsonAtomic } from "../fs-util.js";
 import {
   addTotals,
   type Confidence,
@@ -436,6 +436,7 @@ async function run(
   const inlined: InlinedFile[] = [];
   for (const map of loaded) {
     signal?.throwIfAborted();
+    await breathe();
     if (!map.generatedHash) continue;
     const sources = map.sources
       .map((s, index) => ({ s, index }))

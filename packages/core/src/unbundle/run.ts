@@ -4,7 +4,7 @@ import postcss, { type Root } from "postcss";
 import { readManifest, type StageState, writeManifest } from "../capture/manifest.js";
 import { type WorkspacePaths, workspacePaths } from "../capture/workspace.js";
 import { loadContext } from "../detect/context.js";
-import { writeFileAtomic, writeJsonAtomic } from "../fs-util.js";
+import { breathe, writeFileAtomic, writeJsonAtomic } from "../fs-util.js";
 import { WorkspaceError } from "../maps/run.js";
 import { defaultAdapter, type LibraryAdapter } from "./adapter.js";
 import { assetIndex, planAssets, relativeFile, rewriteCssUrls, rewriteJsAssets } from "./assets.js";
@@ -44,6 +44,7 @@ export type UnbundleProgress =
   | { kind: "start"; workspace: string }
   | { kind: "skip"; workspace: string; reason: string }
   | { kind: "warning"; message: string }
+  | { kind: "chunk"; done: number; total: number }
   | { kind: "module"; done: number; total: number }
   | { kind: "done"; status: StageState["status"]; summary: string };
 
@@ -264,9 +265,12 @@ async function run(
       );
     }
   }
+  let chunksDone = handled.size;
   for (const chunk of inputs.chunks) {
     if (handled.has(chunk)) continue;
     signal?.throwIfAborted();
+    await breathe();
+    progress({ kind: "chunk", done: ++chunksDone, total: inputs.chunks.length });
     const mode = chunk.bundler.bundler;
     try {
       if (mode === "browserify") {
@@ -435,6 +439,7 @@ async function run(
   }[] = [];
   for (const p of placed) {
     signal?.throwIfAborted();
+    await breathe();
     const resolved = renderModule(p, byKey, fileOf, tables, warn);
     const result = await transform(resolved, adapter, skip);
     let code = result.code;

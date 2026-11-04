@@ -31,3 +31,10 @@ export async function writeFileAtomic(file: string, data: string | Uint8Array): 
 export async function writeJsonAtomic(file: string, value: unknown): Promise<void> {
   await writeFileAtomic(file, `${JSON.stringify(value, null, 2)}\n`);
 }
+
+/**
+ * Let timers and I/O run between pieces of synchronous work (parsing a multi-megabyte bundle),
+ * so a progress spinner keeps turning and Ctrl+C is heard. An `await` alone only drains the
+ * microtask queue; this waits for the next macrotask.
+ */
+export const breathe = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));

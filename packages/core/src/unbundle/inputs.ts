@@ -2,6 +2,7 @@ import path from "node:path";
 import type { DetectContext } from "../detect/context.js";
 import type { BundleRanges } from "../detect/ranges.js";
 import { indexer, mapLoader } from "../detect/ranges.js";
+import { breathe } from "../fs-util.js";
 import { lineStartsOf, renameFromMap, type TextEdit } from "../maps/rename.js";
 import { ByteOffsets } from "./ast.js";
 import { detectChunkBundler } from "./bundler.js";
@@ -66,6 +67,7 @@ export async function loadInputs(ctx: DetectContext): Promise<Inputs> {
 
   const js = ctx.assets.filter((a) => a.kind === "js" && a.origin === "first-party");
   for (const asset of js) {
+    await breathe();
     const url = asset.urls[0] ?? "";
     const raw = await ctx.text(asset.hash);
     if (raw === undefined) continue;

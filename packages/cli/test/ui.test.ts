@@ -63,8 +63,17 @@ describe("StageList", () => {
     list.start("capture").done("done");
     list.close();
     expect(screen).toContain("\x1b[");
-    const last = screen.split(new RegExp(`${"\u001b"}\\[\\d+F${"\u001b"}\\[0J`)).at(-1) ?? "";
+    // Lines are overwritten in place: clearing the whole block before a repaint flashes it.
+    expect(screen).not.toMatch(new RegExp(`${"\u001b"}\\[\\d+F${"\u001b"}\\[0?J`));
+    const frames = screen.split(new RegExp(`${"\u001b"}\\[\\d+F`));
+    const last = (frames.at(-1) ?? "").replace(
+      new RegExp(`${"\u001b"}\\[(?:\\?25[lh]|K|J)`, "g"),
+      "",
+    );
     expect(last).toMatch(/^✓ capture\s+done\s+\d+\.\ds\n$/);
+    // The cursor is hidden while the list draws and shown again when it closes.
+    expect(screen.startsWith("\u001b[?25l")).toBe(true);
+    expect(screen.endsWith("\u001b[?25h")).toBe(true);
   });
 });
 

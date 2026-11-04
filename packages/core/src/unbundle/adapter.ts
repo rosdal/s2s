@@ -121,20 +121,34 @@ export function freeNames(code: string): Set<string> | undefined {
  * input did not read (`un-parameters` can turn `arguments` into an `args` it never declares).
  * When the group fails that check, the rules run one at a time and only the bad ones are left out.
  */
+/**
+ * A class made from a constructor function that guards itself with
+ * `if (!(this instanceof X)) return new X(…)`: the function was meant to be called without
+ * `new`, which a class forbids, so un-es6-class must not convert it.
+ */
+export function callableClass(code: string): boolean {
+  return /class\s+([\w$]+)\b[^{]*\{\s*constructor\s*\([^)]*\)\s*\{\s*if\s*\(\s*!\s*\(\s*this\s+instanceof\s+\1\s*\)\s*\)/.test(
+    code,
+  );
+}
+
 async function guardedWakaru(code: string, rules: readonly string[]): Promise<string> {
   const before = freeNames(code);
   if (!before) return runWakaru(code, rules);
   const ok = (out: string) => {
     const after = freeNames(out);
-    return after !== undefined && [...after].every((n) => before.has(n));
+    return (
+      after !== undefined &&
+      [...after].every((n) => before.has(n)) &&
+      !(callableClass(out) && !callableClass(code))
+    );
   };
   const all = await runWakaru(code, rules);
   if (ok(all)) return all;
   let current = code;
   for (const rule of rules) {
     const next = await runWakaru(current, [rule]);
-    const after = freeNames(next);
-    if (after && [...after].every((n) => before.has(n))) current = next;
+    if (ok(next)) current = next;
   }
   return current;
 }

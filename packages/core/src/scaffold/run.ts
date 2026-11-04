@@ -353,6 +353,16 @@ async function run(
   // 2. Plan where every file goes, then copy with references re-pointed.
   const sources: string[] = [];
   for (const m of graph.modules) sources.push(m.file);
+  // Exact sources the graph doesn't list (their CSS, JSON, images) are still imported by the ones
+  // it does. Bundler internals and node_modules copies stay out.
+  const listed = new Set(sources.map((s) => s.toLowerCase()));
+  for (const file of await listFiles(paths.recoveredSourcemap)) {
+    const rel = posix(path.relative(paths.root, file));
+    const inner = rel.slice("recovered/sourcemap/".length);
+    if (/^_(?:vendor|virtual)\//.test(inner) || listed.has(rel.toLowerCase())) continue;
+    sources.push(rel);
+    listed.add(rel.toLowerCase());
+  }
   for (const file of await listFiles(paths.assets))
     sources.push(posix(path.relative(paths.root, file)));
   const texts = new Map<string, string>();
@@ -509,6 +519,7 @@ async function run(
   // 5. Project config.
   await writeFileAtomic(path.join(paths.project, "vite.config.ts"), viteConfig(target));
   await writeFileAtomic(path.join(paths.project, "tsconfig.json"), tsconfig(target));
+  addMissingImports(pkg, graph, packagesFile, warn);
   await writeJsonAtomic(paths.packageJson, scaffoldPackageJson(pkg, target));
 
   // 6. Agent files and the analysis record of where everything went.
@@ -619,6 +630,54 @@ async function run(
       notes,
     },
   };
+}
+
+/**
+ * The version spec for a missing package that Stage 3 only saw as its companion. From React
+ * Router 7 on, react-router-dom is a thin re-export of react-router that stopped tracking its
+ * versions, so it becomes an npm alias of the react-router actually found.
+ */
+function companionSpec(name: string, deps: Record<string, string>, packagesFile: PackagesFile) {
+  if (name !== "react-router-dom") return undefined;
+  const version =
+    deps["react-router"] ?? packagesFile.packages.find((p) => p.name === "react-router")?.version;
+  if (!version) return undefined;
+  const major = Number.parseInt(version.replace(/^[^\d]*/, ""), 10);
+  return major >= 7 ? "npm:react-router@" + version : version;
+}
+
+/**
+ * Add packages the recovered code imports that `package.json` lacks, so the untouched scaffold
+ * builds. The version comes from Stage 3 when it saw the package (any status), else from a
+ * companion package, else `latest`; each one is a warning for the agent to confirm.
+ */
+export function addMissingImports(
+  pkg: PackageJson,
+  graph: ModulesFile,
+  packagesFile: PackagesFile,
+  warn: (message: string) => void,
+): void {
+  const deps = { ...(pkg.dependencies ?? {}) };
+  const known = (name: string) => name in deps || name in (pkg.devDependencies ?? {});
+  const imported = new Set(graph.modules.flatMap((m) => m.packageImports));
+  for (const name of [...imported].sort()) {
+    if (known(name) || name.startsWith("node:")) continue;
+    const seen = packagesFile.packages.find((p) => p.name === name);
+    const version = seen?.version ?? companionSpec(name, deps, packagesFile) ?? "latest";
+    deps[name] = version;
+    warn(
+      "Recovered code imports " +
+        name +
+        ", which package.json lacked; added " +
+        name +
+        "@" +
+        version +
+        ". Confirm it.",
+    );
+  }
+  pkg.dependencies = Object.fromEntries(
+    Object.entries(deps).sort(([a], [b]) => a.localeCompare(b)),
+  );
 }
 
 async function writeAgentFiles(paths: WorkspacePaths, facts: AgentFacts): Promise<void> {

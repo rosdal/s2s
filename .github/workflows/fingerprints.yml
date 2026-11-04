@@ -6,7 +6,7 @@ name: Fingerprints
 # label (the homelab fallback).
 
 on:
-  # TEMPORARY: runs the first build on the homelab runner from this branch. Remove before merge.
+  # TEMPORARY: runs the first build from this branch. Remove before merge.
   push:
     branches: [feat/fingerprints]
     paths: [.github/workflows/fingerprints.yml]
@@ -77,15 +77,14 @@ jobs:
           if-no-files-found: ignore
       - id: matrix
         run: |
-          n=${{ inputs.shards || (github.event_name == 'push' && 8) || 64 }}
+          n=${{ inputs.shards || (github.event_name == 'push' && 128) || 64 }}
           echo "matrix=$(node -e "console.log(JSON.stringify([...Array($n).keys()]))")" >> "$GITHUB_OUTPUT"
           echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
   build:
     needs: plan
-    runs-on: ${{ inputs.runner || (github.event_name == 'push' && 'homelab') || 'ubuntu-latest' }}
-    # Self-hosted runners allow long jobs; GitHub-hosted ones stop at 6 hours.
-    timeout-minutes: ${{ github.event_name == 'push' && 2880 || 350 }}
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    timeout-minutes: 350
     strategy:
       fail-fast: false
       max-parallel: 20

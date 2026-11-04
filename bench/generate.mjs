@@ -178,5 +178,21 @@ export async function generateApp({ seed, pool, dir }) {
     );
     installed[name] = pkg.version;
   }
-  return { seed, requested: dependencies, direct: installed };
+  const app = { seed, requested: dependencies, direct: installed };
+  await writeFile(
+    path.join(dir, "app.json"),
+    `${JSON.stringify(app, null, 2)}
+`,
+  );
+  return app;
+}
+
+/** A generated app already in `dir`, when the same seed made it: generation is deterministic. */
+export async function existingApp(seed, dir) {
+  try {
+    const app = JSON.parse(await readFile(path.join(dir, "app.json"), "utf8"));
+    return app.seed === seed ? app : undefined;
+  } catch {
+    return undefined;
+  }
 }

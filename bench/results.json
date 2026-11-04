@@ -208,9 +208,7 @@
         }
       ],
       "found": [],
-      "missed": [
-        "clsx"
-      ]
+      "missed": ["clsx"]
     },
     {
       "fixture": "version-strings",

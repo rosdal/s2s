@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { FingerprintIndex, matchBundles } from "@rosdal/s2s-core/fingerprint";
 import { BUILDS, runBuild } from "./builds.mjs";
-import { generateApp } from "./generate.mjs";
+import { existingApp, generateApp } from "./generate.mjs";
 import { aggregate, answerKey, sameMinor, scoreBuild } from "./score.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -27,6 +27,8 @@ const { values } = parseArgs({
     pool: { type: "string" },
     compare: { type: "string" },
     fixtures: { type: "boolean", default: false },
+    // Reuse apps a previous run generated with the same seed, skipping their npm installs.
+    reuse: { type: "boolean", default: false },
     table: { type: "string" },
   },
 });
@@ -107,7 +109,9 @@ async function main() {
     const dir = path.join(values.work, `app-${appSeed}`);
     let app;
     try {
-      app = await generateApp({ seed: appSeed, pool, dir });
+      app =
+        (values.reuse && (await existingApp(appSeed, dir))) ||
+        (await generateApp({ seed: appSeed, pool, dir }));
     } catch (error) {
       failures.push({
         app: appSeed,
@@ -235,7 +239,9 @@ async function fixtureSpotChecks(index, indexed) {
       ...(await readdir(path.join(dir, "node_modules", ".pnpm")).catch(() => [])),
       ...(await readdir(path.join(root, "..", "node_modules", ".pnpm")).catch(() => [])),
     ];
-    const installed = new Set(store.map((d) => d.replace(/@[^@_]+(?:_.*)?$/, "").replace(/\+/g, "/")));
+    const installed = new Set(
+      store.map((d) => d.replace(/@[^@_]+(?:_.*)?$/, "").replace(/\+/g, "/")),
+    );
     for (const d of deps) installed.add(d);
     const versionOf = async (dep) => {
       try {

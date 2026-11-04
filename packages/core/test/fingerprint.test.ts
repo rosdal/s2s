@@ -274,6 +274,37 @@ ${lib("wrapper", 1)}`,
     }
   });
 
+  test("a bundle that vendors other packages is not reported for their code", async () => {
+    // `fatbundle` carries copies of `small1` and `small2` plus its own code, without declaring
+    // them, like plotly.js-dist-min carries d3.
+    const file3 = path.join(tmp, "vendor.sqlite");
+    const writer = new IndexWriter(file3);
+    const add = async (name: string, code: string) => {
+      const p = await fingerprintCode(code);
+      writer.addPackage(name, [
+        { name, version: "1.0.0", functions: p.functions.map((f) => f.hash), strings: [] },
+      ]);
+    };
+    await add("small1", lib("small1", 1));
+    await add("small2", lib("small2", 1));
+    const join = (...parts: string[]) => parts.join("\n");
+    await add("fatbundle", join(lib("small1", 1), lib("small2", 1), lib("fat", 1), lib("fat2", 1)));
+    writer.close();
+    const index = FingerprintIndex.open(file3);
+    try {
+      const text = join(lib("small1", 1), lib("small2", 1));
+      const result = await matchBundles([{ id: "b", url: "u", text }], [index]);
+      expect(result.packages.map((p) => p.name)).toEqual(["small1", "small2"]);
+      const whole = await matchBundles(
+        [{ id: "b", url: "u", text: join(text, lib("fat", 1), lib("fat2", 1)) }],
+        [index],
+      );
+      expect(whole.packages.map((p) => p.name)).toContain("fatbundle");
+    } finally {
+      index.close();
+    }
+  });
+
   test("a handful of shared functions is not presence", async () => {
     const index = FingerprintIndex.open(file);
     try {

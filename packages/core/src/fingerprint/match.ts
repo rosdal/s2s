@@ -11,6 +11,11 @@ export const MIN_FUNCTIONS = 5;
  * reads as "unique functions" whatever the index size.
  */
 export const MIN_SCORE = 4;
+/**
+ * A package whose matched functions are at least this share of code owned by smaller accepted
+ * packages is a bundle that vendors them, not a dependency of the site.
+ */
+export const MAX_VENDOR_OVERLAP = 0.4;
 /** A distinctive string is weaker than a function: it may sit in first-party code too. */
 const STRING_WEIGHT = 0.5;
 /** Matched functions this close together (in characters) are one vendor range. */
@@ -159,6 +164,14 @@ export async function matchBundles(
   const total = universe.size;
   const fnOwners = lookupAll(indexes, "function", [...functionHashes]);
   const strOwners = lookupAll(indexes, "string", [...stringHashes]);
+  // Who matched what before any shared hash is given to one owner; vendoring is judged on it.
+  const rawFunctions = new Map<string, Set<bigint>>();
+  for (const [hash, owners] of fnOwners)
+    for (const name of owners.keys()) {
+      const set = rawFunctions.get(name) ?? new Set<bigint>();
+      set.add(hash);
+      rawFunctions.set(name, set);
+    }
   // Code a package shares with one of its own dependencies is the dependency's: a prebuilt
   // bundle (`vue/dist/vue.esm-browser.js`) or code that later moved into its own package
   // (framer-motion into motion-dom) must not claim the dependency's functions.
@@ -177,6 +190,20 @@ export async function matchBundles(
     );
     // Packages that depend on each other cancel out; then nobody is dropped.
     if (drop.length < names.length) for (const name of drop) owners.delete(name);
+  }
+  // Prebuilt bundles vendor packages without declaring them (plotly.js-dist-min carries all of
+  // d3), and small packages inline bits of big ones (aos carries lodash.debounce). A hash
+  // several packages share goes to the one with the largest matched share of its own indexed
+  // functions: a d3 module whose code is half present beats a bundle that is 1% present.
+  const hits = new Map<string, number>();
+  for (const owners of fnOwners.values())
+    for (const name of owners.keys()) hits.set(name, (hits.get(name) ?? 0) + 1);
+  const share = (name: string) =>
+    (hits.get(name) ?? 0) / Math.max(1, universe.get(name)?.indexed ?? 1);
+  for (const owners of [...fnOwners.values(), ...strOwners.values()]) {
+    if (owners.size < 2) continue;
+    const best = Math.max(...[...owners.keys()].map(share));
+    for (const name of [...owners.keys()]) if (share(name) < best) owners.delete(name);
   }
   // An overlay can push a hash over the sharing limit; the merged view applies it again.
   for (const [hash, owners] of fnOwners) if (owners.size > MAX_SHARING) fnOwners.delete(hash);
@@ -238,6 +265,27 @@ export async function matchBundles(
     const mine = new Set([...e.functions].filter((h) => !claimed.has(h)));
     for (const h of mine) claimed.add(h);
     accepted.push({ name: best.name, score: best.score, functions: mine, strings: e.strings });
+  }
+
+  // A vendoring bundle (mermaid carries d3, dompurify and lodash-es) matches mostly code that
+  // other accepted packages also own. Drop such packages one at a time, most overlapping first,
+  // so the authors of the code keep it.
+  const overlapLimit = MAX_VENDOR_OVERLAP;
+  for (;;) {
+    let worst: { at: number; overlap: number } | undefined;
+    accepted.forEach((a, at) => {
+      const all = rawFunctions.get(a.name) ?? new Set<bigint>();
+      if (all.size === 0) return;
+      let shared = 0;
+      // Only overlap with smaller packages counts: a bundle contains its parts, never the reverse.
+      const mine = universe.get(a.name)?.indexed ?? 0;
+      const parts = accepted.filter((o) => o !== a && (universe.get(o.name)?.indexed ?? 0) < mine);
+      for (const h of all) if (parts.some((o) => rawFunctions.get(o.name)?.has(h))) shared++;
+      const overlap = shared / all.size;
+      if (overlap >= overlapLimit && (!worst || overlap > worst.overlap)) worst = { at, overlap };
+    });
+    if (!worst) break;
+    accepted.splice(worst.at, 1);
   }
 
   const packages: PackageMatch[] = [];

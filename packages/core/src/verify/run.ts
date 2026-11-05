@@ -12,7 +12,7 @@ import { readRequestLog } from "../capture/request-log.js";
 import { type WorkspacePaths, workspacePaths } from "../capture/workspace.js";
 import { PACKAGE_MANAGERS, type PackageManager } from "../detect/project.js";
 import { writeFileAtomic, writeJsonAtomic } from "../fs-util.js";
-import { runScript } from "../scaffold/exec.js";
+import { buildFailureExcerpt, runScript } from "../scaffold/exec.js";
 import type { Thresholds } from "../scaffold/facts.js";
 import { loadThresholds } from "./config.js";
 import { DOM_SIMILARITY, type DomResult } from "./dom.js";
@@ -96,7 +96,7 @@ export interface VerifyResult {
   exitCode: VerifyExitCode;
   summary: string;
   report?: VerifyReport;
-  /** First 50 lines of a failed build. */
+  /** The part of a failed build's output that reports the failure. */
   buildOutput?: string;
   error?: string;
 }
@@ -172,7 +172,7 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
       const build = await runScript(paths.project, pm, "build", options.signal);
       if (options.signal?.aborted) return fail("Interrupted");
       if (build.exitCode !== 0) {
-        const buildOutput = build.output.trim().split("\n").slice(0, 50).join("\n");
+        const buildOutput = buildFailureExcerpt(build.output);
         await mkdir(paths.verify, { recursive: true });
         await appendFile(
           paths.verifyHistory,

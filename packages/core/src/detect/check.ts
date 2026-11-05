@@ -1,3 +1,4 @@
+import { satisfies } from "semver";
 import type { MergedPackage, RegistryCheck } from "./merge.js";
 import {
   compareVersions,
@@ -85,6 +86,7 @@ export async function checkPackages(
   // A failed check outweighs any amount of text evidence: the name or version cannot be trusted.
   for (const pkg of packages) if (pkg.registry?.status === "failed") pkg.confidence = "low";
 
+  alignPeerVersions(packages, infos, options.cutoffOf);
   alignLockstepVersions(packages, infos);
 
   // A package another detected package depends on (at its chosen version) is transitive.
@@ -103,6 +105,44 @@ export async function checkPackages(
       if (names.has(parent) && !pkg.transitiveOf.includes(parent)) pkg.transitiveOf.push(parent);
     }
     pkg.transitiveOf.sort();
+  }
+}
+
+/**
+ * An inferred version must accept the peers the site really has. "Newest before the bundle's
+ * date" can pick a release whose peer range excludes a version the evidence pinned
+ * (jotai-scope 0.12 needs jotai >= 2.20, but the bundle holds jotai 2.11.0), and a strict
+ * package manager then fails to build. Step such a package back to the newest release, published
+ * by the cutoff, whose peer ranges accept every peer with a version from evidence.
+ */
+export function alignPeerVersions(
+  packages: MergedPackage[],
+  infos: Map<string, PackageInfo>,
+  cutoffOf: (pkg: MergedPackage) => Date | null,
+): void {
+  // Only versions read from the site count as facts; another guess cannot overrule a guess.
+  const known = new Map(
+    packages
+      .filter((p) => p.version && p.versionSource !== "inferred")
+      .map((p) => [p.name, p.version as string]),
+  );
+  const accepts = (peers: Record<string, string> | undefined) =>
+    Object.entries(peers ?? {}).every(([name, range]) => {
+      const version = known.get(name);
+      return !version || satisfies(version, range, { includePrerelease: true, loose: true });
+    });
+  for (const pkg of packages) {
+    const info = infos.get(pkg.name);
+    if (pkg.versionSource !== "inferred" || !pkg.version || !info) continue;
+    if (accepts(info.versions[pkg.version]?.peers)) continue;
+    const cutoff = cutoffOf(pkg)?.getTime() ?? Number.POSITIVE_INFINITY;
+    const fitting = Object.keys(info.versions)
+      .filter((v) => parseVersion(v)?.pre === null)
+      .filter((v) => Date.parse(info.time[v] ?? "") <= cutoff || !(v in info.time))
+      .filter((v) => accepts(info.versions[v]?.peers))
+      .sort(compareVersions)
+      .at(-1);
+    if (fitting) pkg.version = fitting;
   }
 }
 

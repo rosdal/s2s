@@ -107,6 +107,8 @@ export const symbols = {
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: matching ANSI escapes is the point.
 const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g;
+const HIDE_CURSOR = "\x1b[?25l";
+const SHOW_CURSOR = "\x1b[?25h";
 
 export function visibleLength(text: string): number {
   return [...text.replace(ANSI, "")].length;
@@ -278,6 +280,8 @@ export class StageList {
   /** Draw the waiting stages at once, so the whole run is visible from the start. */
   show(): void {
     if (!this.live) return;
+    // A run cut short (a second Ctrl+C exits at once) must not leave the cursor hidden.
+    process.once("exit", () => this.surface.write?.(SHOW_CURSOR));
     this.redraw();
     this.timer = setInterval(() => {
       this.frame++;
@@ -302,6 +306,7 @@ export class StageList {
       }
     this.footer = undefined;
     this.redraw();
+    this.surface.write?.(SHOW_CURSOR);
     this.drawn = 0;
   }
 
@@ -311,10 +316,7 @@ export class StageList {
       for (const line of lines) this.surface.line(line);
       return;
     }
-    this.erase();
-    for (const line of lines) this.surface.write?.(`${line}\n`);
-    this.drawn = 0;
-    this.redraw();
+    this.paint(lines);
   }
 
   start(name: string): StageReporter {
@@ -416,16 +418,26 @@ export class StageList {
     return out;
   }
 
-  private erase(): void {
-    if (this.drawn > 0) this.surface.write?.(`\x1b[${this.drawn}F\x1b[0J`);
+  /**
+   * Repaint the block in one write, with `above` printed first. Each line is overwritten in place
+   * (clear to its end, not the whole block first), so the terminal never shows an empty frame;
+   * clearing the block before redrawing it is what made the list flash. The cursor stays hidden
+   * while the list is live.
+   */
+  private paint(above: string[] = []): void {
+    let out = HIDE_CURSOR;
+    if (this.drawn > 0) out += `\x1b[${this.drawn}F`;
+    const lines = [...above, ...this.lines()];
+    for (const line of lines) out += `${line}\x1b[K\n`;
+    // A shorter frame than the last one leaves old lines below; clear only those.
+    if (lines.length < this.drawn) out += "\x1b[J";
+    this.surface.write?.(out);
+    this.drawn = lines.length - above.length;
   }
 
   private redraw(): void {
     if (!this.live) return;
-    const lines = this.lines();
-    this.erase();
-    this.surface.write?.(`${lines.join("\n")}\n`);
-    this.drawn = lines.length;
+    this.paint();
   }
 }
 

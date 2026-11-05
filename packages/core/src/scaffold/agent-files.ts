@@ -108,7 +108,7 @@ export function agentsMd(f: AgentFacts): string {
     "| --- | --- |",
     "| 0 | Pass |",
     "| 1 | Regression: read `verify/report.md` |",
-    "| 2 | Build failed: the first 50 lines of build output are printed |",
+    "| 2 | Build failed: the lines that report the failure are printed |",
     "| 3 | Verify itself failed (not your change) |",
     "",
     "Thresholds (from `s2s.config.ts`):",

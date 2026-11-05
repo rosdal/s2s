@@ -1,0 +1,10 @@
+{
+  "name": "minimatch",
+  "version": "3.99.0",
+  "private": true,
+  "description": "minimatch 3's callable CommonJS export, backed by minimatch 11",
+  "main": "index.js",
+  "dependencies": {
+    "minimatch": "^11.0.1"
+  }
+}

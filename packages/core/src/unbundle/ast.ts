@@ -61,8 +61,21 @@ export function applyEdits(text: string, edits: TextEdit[], from = 0, to = text.
 export const start = (node: t.Node): number => node.start ?? 0;
 export const end = (node: t.Node): number => node.end ?? 0;
 
-/** A `"…"` literal for generated code. */
-export const quote = (value: string): string => JSON.stringify(value);
+const UNSAFE_IN_CODE: Record<string, string> = {
+  "<": "\\u003C",
+  ">": "\\u003E",
+  "\u2028": "\\u2028",
+  "\u2029": "\\u2029",
+};
+
+/**
+ * A `"…"` literal for generated code. Beyond JSON's escaping, `<` and `>` are escaped so a value
+ * cannot close a `<script>` the code is later inlined into, and U+2028/U+2029 so older parsers
+ * do not read them as line breaks. Import specifiers and plain names never contain them, so the
+ * literals people read stay as they were.
+ */
+export const quote = (value: string): string =>
+  JSON.stringify(value).replace(/[<>\u2028\u2029]/g, (c) => UNSAFE_IN_CODE[c] ?? c);
 
 /** Specifier that marks a reference to another module until files are placed. */
 export const MODULE_PREFIX = "s2s-module:";

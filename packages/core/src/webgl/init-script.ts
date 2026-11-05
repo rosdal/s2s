@@ -63,6 +63,40 @@ function INIT(cfg: { seed: number | null; full: boolean }): void {
       channel.port2.postMessage(0);
     });
 
+  // Decoding that runs off the clock (image bitmaps, response bodies, audio): s2s waits for it to
+  // finish before the next clock step, so a slow machine lands it on the same step as a fast one.
+  let pending = 0;
+  const track = <T>(p: Promise<T>): Promise<T> => {
+    pending++;
+    const done = () => {
+      pending = Math.max(0, pending - 1);
+    };
+    p.then(done, done);
+    return p;
+  };
+  if (cfg.full) {
+    try {
+      const cib = w.createImageBitmap;
+      if (typeof cib === "function")
+        w.createImageBitmap = function (...args: Any[]) {
+          return track(cib.apply(this, args));
+        };
+      for (const method of ["arrayBuffer", "blob", "json", "text"] as const) {
+        const original = Response.prototype[method];
+        Response.prototype[method] = function (this: Response) {
+          return track((original as () => Promise<unknown>).call(this));
+        } as never;
+      }
+      const ctx = w.BaseAudioContext?.prototype;
+      if (ctx?.decodeAudioData) {
+        const decode = ctx.decodeAudioData;
+        ctx.decodeAudioData = function (this: Any, ...args: Any[]) {
+          return track(decode.apply(this, args));
+        };
+      }
+    } catch {}
+  }
+
   try {
     const proto = HTMLCanvasElement.prototype;
     const getContext = proto.getContext;
@@ -519,6 +553,11 @@ function INIT(cfg: { seed: number | null; full: boolean }): void {
     /** Resolve after `n` real frames, then once the task queue has drained. */
     async settle(n: number) {
       for (let i = 0; i < n; i++) {
+        if (realFrame) await new Promise<void>((resolve) => realFrame(() => resolve()));
+        await drainTasks();
+      }
+      // Then until no tracked decoding is left (each finish may start more), for up to 5 s.
+      for (let spins = 0; pending > 0 && spins < 250; spins++) {
         if (realFrame) await new Promise<void>((resolve) => realFrame(() => resolve()));
         await drainTasks();
       }

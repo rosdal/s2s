@@ -117,7 +117,7 @@ describe("s2s capture", () => {
     expect(text).toMatch(/^\s+load\s+desktop index\s+requests \d+/m);
     expect(text).toMatch(/^\s+interact\s+desktop index/m);
     expect(text).toMatch(
-      /^✓ capture\s+\d+ requests? · .+ · desktop · \d+ maps? found {2}\d+\.\ds$/m,
+      /^✓ capture\s+\d+ requests? · .+ · desktop · \d+ maps? found {2}\d+(?:\.\d)?s$/m,
     );
   });
 

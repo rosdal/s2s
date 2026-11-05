@@ -7,6 +7,8 @@ export default defineProject({
     // A private cache, so a fingerprint index the developer pulled never changes test results.
     env: { S2S_CACHE_DIR: path.join(tmpdir(), "s2s-test-cache") },
     name: "core",
+    // Run separately, see vitest.webgl.config.ts.
+    exclude: ["test/webgl.test.ts", "test/webgl-session.test.ts", "**/node_modules/**"],
     // Browser-driven capture tests launch Chrome; give them room on slow CI runners.
     testTimeout: 120_000,
     hookTimeout: 120_000,

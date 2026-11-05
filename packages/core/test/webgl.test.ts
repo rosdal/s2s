@@ -7,12 +7,15 @@ import type { BrowserContext } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { buildLocal } from "../../fingerprints/src/local.js";
 import { type CaptureOptions, capture } from "../src/capture/capture.js";
+import { workspacePaths } from "../src/capture/workspace.js";
 import { detect } from "../src/detect/run.js";
 import { OVERLAY_FILE } from "../src/fingerprint/store.js";
 import { maps } from "../src/maps/run.js";
 import { scaffold } from "../src/scaffold/run.js";
 import { unbundle } from "../src/unbundle/run.js";
 import { verify } from "../src/verify/run.js";
+import { readKeyframes } from "../src/webgl/assets.js";
+import { diffSnapshots } from "../src/webgl/snapshot.js";
 import { FIXTURES_DIR, type FixtureName, serveFixture } from "./helpers/fixtures.js";
 
 /** Capture, unbundle, install, build and two keyframe walks: minutes, not seconds. */
@@ -30,7 +33,7 @@ beforeAll(async () => {
   pnpmVersion = execSync("pnpm --version", { cwd: tmp, encoding: "utf8" }).trim();
   fingerprints = path.join(tmp, "fingerprints");
   await buildLocal({
-    specs: ["three@0.187.0", "gsap@3.13.0"],
+    specs: ["three@0.187.0", "gsap@3.13.0", "@dimforge/rapier3d-compat@0.21.0"],
     out: path.join(fingerprints, OVERLAY_FILE),
   });
 }, SLOW);
@@ -262,6 +265,276 @@ describe("three scaffold", () => {
       expect(
         verified.report?.checks.filter((c) => !c.pass),
         JSON.stringify(verified.report?.checks, null, 1),
+      ).toEqual([]);
+      expect(verified.exitCode).toBe(0);
+    },
+    SLOW,
+  );
+});
+
+const readJson = async <T>(dir: string, file: string) =>
+  JSON.parse(await readFile(path.join(dir, file), "utf8")) as T;
+
+interface AssetsJson {
+  mode: string;
+  localOnly: boolean;
+  checks: {
+    leak: { passed: boolean; files: string[] } | null;
+    unchangedCopies: { passed: boolean; files: string[] } | null;
+    budgets: { passed: boolean; failures: string[] } | null;
+  };
+  assets: {
+    type: string;
+    url: string;
+    output: {
+      kind: string;
+      derived: boolean;
+      clone?: {
+        staticTriangles: [number, number];
+        animatedTriangles: [number, number];
+        textures: { to: [number, number] }[];
+      };
+    };
+  }[];
+}
+
+type Nodes = { path: string; quaternion: number[] }[];
+
+describe("three fixtures", () => {
+  test(
+    "three-skinned clone: props simplified within budget, the rig still animates, notices written",
+    async () => {
+      const dir = await copyOf(await unbundled("three-skinned"));
+      const result = await scaffold({
+        workspace: dir,
+        git: false,
+        recoverer: { assets: "clone", cloneRatio: 0.25, cloneTexture: 128 },
+      });
+      expect(result.build, result.buildOutput).toBe("passed");
+      const assets = await readJson<AssetsJson>(dir, "analysis/assets.json");
+      expect(assets.localOnly).toBe(true);
+      expect(assets.checks.budgets).toEqual({ passed: true, failures: [] });
+      expect(assets.checks.unchangedCopies).toEqual({ passed: true, files: [] });
+      const stage = assets.assets.find((a) => a.type === "model");
+      const clone = stage?.output.clone;
+      expect(stage?.output.derived).toBe(true);
+      expect(clone?.staticTriangles[1]).toBeLessThan((clone?.staticTriangles[0] ?? 0) * 0.3);
+      // The skinned body keeps every triangle.
+      expect(clone?.animatedTriangles[1]).toBe(clone?.animatedTriangles[0]);
+      expect(clone?.textures.every((t) => Math.max(...t.to) <= 128)).toBe(true);
+      for (const file of ["ASSETS.md", "AGENTS.md", "project/README.md"])
+        expect(await readFile(path.join(dir, file), "utf8"), file).toMatch(/local study only/i);
+      // The rig animates in the capture...
+      const t0 = await readJson<{ scenes: { nodes: Nodes }[] }>(
+        dir,
+        "raw/webgl/index/desktop/t0.json",
+      );
+      const t1 = await readJson<{ scenes: { changed: Nodes }[] }>(
+        dir,
+        "raw/webgl/index/desktop/t1000.json",
+      );
+      const spine = (nodes: Nodes) => nodes.find((n) => n.path.endsWith("/Spine"))?.quaternion;
+      expect(spine(t1.scenes[0]?.changed ?? [])).toBeDefined();
+      expect(spine(t1.scenes[0]?.changed ?? [])).not.toEqual(spine(t0.scenes[0]?.nodes ?? []));
+      // ...and the clone matches it at every keyframe, canvas within 8%.
+      const verified = await verify({ workspace: dir, build: false, quietMs: 300 });
+      const webgl = verified.report?.webgl?.[0];
+      expect(webgl?.mode).toBe("clone");
+      expect(
+        webgl?.keyframes.filter((k) => !k.pass),
+        JSON.stringify(webgl, null, 1),
+      ).toEqual([]);
+      expect(webgl?.keyframes.every((k) => k.canvasDiff !== null && k.canvasDiff <= 0.08)).toBe(
+        true,
+      );
+    },
+    SLOW,
+  );
+
+  test(
+    "three-compressed: decoders detected; proxies need none; original mode serves three's",
+    async () => {
+      const source = await unbundled("three-compressed");
+      const requests = (await readFile(path.join(source, "raw", "requests.jsonl"), "utf8"))
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l) as { url: string; tags?: string[] });
+      const tags = new Set(requests.flatMap((r) => r.tags ?? []));
+      expect(tags).toContain("decoder:draco");
+      expect(tags).toContain("decoder:basis");
+      expect(tags).toContain("asset:model");
+      expect(tags).toContain("asset:texture");
+      const framework = await readJson<{ details: { decoders: string[]; addons: string[] } }>(
+        source,
+        "analysis/framework.json",
+      );
+      expect(framework.details.decoders).toEqual(["basis", "draco"]);
+      expect(framework.details.addons).toEqual(
+        expect.arrayContaining(["DRACOLoader", "GLTFLoader", "KTX2Loader"]),
+      );
+
+      const proxy = await copyOf(source);
+      const proxied = await scaffold({
+        workspace: proxy,
+        git: false,
+        install: false,
+        build: false,
+        recoverer: { assets: "proxy" },
+      });
+      expect(proxied.status).toBe("complete");
+      const { NodeIO } = await import("@gltf-transform/core");
+      const glb = await new NodeIO().readBinary(
+        new Uint8Array(
+          await readFile(path.join(proxy, "project", "public", "models", "sculpture.glb")),
+        ),
+      );
+      expect(
+        glb
+          .getRoot()
+          .listExtensionsUsed()
+          .map((e) => e.extensionName),
+      ).toEqual([]);
+      const ktx = await readFile(path.join(proxy, "project", "public", "textures", "wall.ktx2"));
+      expect(ktx.readUInt32LE(20)).toBe(4);
+      const proxyAssets = await readJson<AssetsJson>(proxy, "analysis/assets.json");
+      expect(proxyAssets.checks.leak?.passed).toBe(true);
+      // No decoder file from the site is copied, in any mode.
+      expect(existsSync(path.join(proxy, "project", "public", "draco"))).toBe(false);
+
+      const original = await copyOf(source);
+      const result = await scaffold({
+        workspace: original,
+        git: false,
+        recoverer: { assets: "original" },
+      });
+      expect(result.build, result.buildOutput).toBe("passed");
+      expect(await readFile(path.join(original, "project", "vite.config.ts"), "utf8")).toContain(
+        "s2sDecoders()",
+      );
+      expect(existsSync(path.join(original, "project", "public", "draco"))).toBe(false);
+      expect(
+        existsSync(path.join(original, "project", "dist", "draco", "draco_wasm_wrapper.js")),
+      ).toBe(true);
+      expect(
+        existsSync(path.join(original, "project", "dist", "basis", "basis_transcoder.wasm")),
+      ).toBe(true);
+      const verified = await verify({ workspace: original, build: false, quietMs: 300 });
+      const webgl = verified.report?.webgl?.[0];
+      expect(webgl?.mode).toBe("original");
+      expect(
+        webgl?.keyframes.filter((k) => !k.pass),
+        JSON.stringify([verified.report?.checks, webgl], null, 1),
+      ).toEqual([]);
+      expect(webgl?.keyframes.every((k) => k.canvasDiff !== null && k.canvasDiff <= 0.03)).toBe(
+        true,
+      );
+    },
+    SLOW,
+  );
+
+  test(
+    "r3f-scene: React Three Fiber detected; the scaffold takes the R3F layout",
+    async () => {
+      const dir = await copyOf(await unbundled("r3f-scene"));
+      const framework = await readJson<{
+        recoverer: string;
+        flavour: string;
+        details: { companions: string[] };
+      }>(dir, "analysis/framework.json");
+      expect(framework.recoverer).toBe("three");
+      expect(framework.flavour).toBe("r3f");
+      expect(framework.details.companions).toContain("@react-three/fiber");
+      const result = await scaffold({ workspace: dir, git: false, install: false, build: false });
+      expect(result.status).toBe("complete");
+      expect(existsSync(path.join(dir, "project", "src", "components", "README.md"))).toBe(true);
+      expect(existsSync(path.join(dir, "project", "src", "objects"))).toBe(false);
+      expect(await readFile(path.join(dir, "AGENTS.md"), "utf8")).toContain(
+        "through React Three Fiber",
+      );
+      const graph = await readJson<{ nodes: { path: string }[] }[]>(
+        dir,
+        "project/src/scene/graph.json",
+      );
+      expect(graph[0]?.nodes.map((n) => n.path)).toEqual(
+        expect.arrayContaining([expect.stringMatching(/\/Shelf\/Middle$/)]),
+      );
+      // React Three Fiber starts its renderer late and animates by per-frame deltas; a second
+      // capture lands on the same frames, within float rounding (well inside verify's tolerance).
+      const again = await captured("r3f-scene");
+      const ids = ["t0", "t1000", "t3000"];
+      const first = await readKeyframes(workspacePaths(dir), "index", "desktop", ids);
+      const second = await readKeyframes(workspacePaths(again), "index", "desktop", ids);
+      for (const id of ids) {
+        const a = first.get(id);
+        const b = second.get(id);
+        expect(a && b, id).toBeTruthy();
+        if (a && b) expect(diffSnapshots(a, b).differences, id).toEqual([]);
+      }
+    },
+    SLOW,
+  );
+
+  test(
+    "three-postfx: the custom pass comes back as GLSL and the composer as code",
+    async () => {
+      const dir = await copyOf(await unbundled("three-postfx"));
+      const shaders = await readJson<{ files: { name: string; stage: string; source: string }[] }>(
+        dir,
+        "analysis/shaders.json",
+      );
+      const vignette = shaders.files.filter((f) => f.name.startsWith("vignette"));
+      expect(vignette.map((f) => `${f.stage}:${f.source}`).sort()).toEqual([
+        "frag:bundle",
+        "vert:bundle",
+      ]);
+      const result = await scaffold({ workspace: dir, git: false });
+      expect(result.build, result.buildOutput).toBe("passed");
+      const named = await readJson<{ named: { specifier: string; export: string }[] }>(
+        dir,
+        "analysis/vendor-names.json",
+      );
+      expect(named.named.map((n) => `${n.specifier}#${n.export}`)).toEqual(
+        expect.arrayContaining([
+          "three/addons/postprocessing/EffectComposer.js#EffectComposer",
+          "three/addons/postprocessing/RenderPass.js#RenderPass",
+          "three/addons/postprocessing/ShaderPass.js#ShaderPass",
+        ]),
+      );
+      // A pass the index doesn't cover stays as recovered code, still wired to the composer.
+      const recovered = path.join(dir, "project", "src", "_recovered");
+      const files = (await readdir(recovered, { recursive: true })).filter((f) =>
+        f.endsWith(".js"),
+      );
+      const code = (
+        await Promise.all(files.map((f) => readFile(path.join(recovered, f), "utf8")))
+      ).join("\n");
+      expect(code).toMatch(/luminosityThreshold|UnrealBloomPass/);
+      expect(code).toMatch(/vignette(?:-shader)?\.(?:vert|frag)\.glsl\?raw/);
+      const verified = await verify({ workspace: dir, build: false, quietMs: 300 });
+      expect(
+        verified.report?.webgl?.[0]?.keyframes.filter((k) => !k.pass),
+        JSON.stringify(verified.report, null, 1),
+      ).toEqual([]);
+    },
+    SLOW,
+  );
+
+  test(
+    "three-physics: Rapier detected; bodies compared at t0 only",
+    async () => {
+      const dir = await copyOf(await unbundled("three-physics"));
+      const framework = await readJson<{ details: { physics: string[] } }>(
+        dir,
+        "analysis/framework.json",
+      );
+      expect(framework.details.physics).toEqual(["@dimforge/rapier3d-compat"]);
+      const result = await scaffold({ workspace: dir, git: false });
+      expect(result.build, result.buildOutput).toBe("passed");
+      const verified = await verify({ workspace: dir, build: false, quietMs: 300 });
+      const webgl = verified.report?.webgl?.[0];
+      expect(
+        webgl?.keyframes.filter((k) => !k.pass),
+        JSON.stringify([verified.report?.checks, webgl], null, 1),
       ).toEqual([]);
       expect(verified.exitCode).toBe(0);
     },

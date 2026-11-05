@@ -144,7 +144,9 @@ export async function cloneModel(
 
   for (const ext of root.listExtensionsUsed()) if (!KEEP.has(ext.extensionName)) ext.dispose();
   if (webp) doc.createExtension(EXTTextureWebP).setRequired(true);
-  await doc.transform(quantize());
+  // Positions stay float: quantizing them moves the dequantization into node scales, and the
+  // scene graph (which verify compares) would change.
+  await doc.transform(quantize({ pattern: /^(?!POSITION$)/ }));
   if (options.meshopt)
     doc
       .createExtension(EXTMeshoptCompression)

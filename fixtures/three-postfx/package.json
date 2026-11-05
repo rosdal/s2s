@@ -1,0 +1,14 @@
+{
+  "name": "@s2s-fixtures/three-postfx",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build"
+  },
+  "dependencies": {
+    "three": "0.187.0"
+  },
+  "devDependencies": {
+    "vite": "^8.3.5"
+  }
+}

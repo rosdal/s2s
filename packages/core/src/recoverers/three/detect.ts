@@ -23,7 +23,7 @@ export const COMPANION_MARKERS: Record<string, RegExp> = {
   "gsap/ScrollTrigger": /ScrollTrigger/,
   lenis: /lenis-smooth|lenis-scrolling|__lenis/,
   "@dimforge/rapier3d-compat": /rapier_wasm3d|RAPIER|rawintegrationparameters/i,
-  "cannon-es": /cannon-es|ConvexPolyhedron/,
+  "cannon-es": /cannon-es|CANNON\./,
   howler: /howler\.js|Howler/,
 };
 

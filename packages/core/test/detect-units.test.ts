@@ -131,7 +131,9 @@ describe("signatures", () => {
     const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
     expect(SIGNATURE_FILES).toHaveLength(files.length);
     const names = new Set(compileSignatures().map((p) => p.package));
-    for (const file of files) expect(names).toContain(file.replace(/\.json$/, ""));
+    // Scoped packages are named `@scope__name.json`.
+    for (const file of files)
+      expect(names).toContain(file.replace(/\.json$/, "").replace("__", "/"));
   });
 
   const patterns = compileSignatures();

@@ -112,9 +112,9 @@ export function bestExport(
   shape: Shape,
   exports: Candidate[],
 ): { name: string; score: number } | null {
-  if (shape.size < MIN_TOKENS) return null;
+  if (shape.size < MIN_TOKENS - 1) return null;
   const scored = exports
-    .filter((e) => e.shape.size >= MIN_TOKENS)
+    .filter((e) => e.shape.size >= MIN_TOKENS - 1)
     .map((e) => ({ ...e, score: jaccard(shape, e.shape) }))
     .sort(
       (a, b) => b.score - a.score || Number(a.name === "default") - Number(b.name === "default"),
@@ -124,6 +124,12 @@ export function bestExport(
   // One value exported under two names (`gsap` and `default`) is one candidate, not a tie.
   const rival = scored.find((e) => e !== best && jaccard(e.shape, best.shape) < 1);
   if (rival && best.score - rival.score < 0.05) return null;
+  // A tiny shape (`{ clone, merge }`) only counts as an exact match nothing else comes near.
+  if (
+    (shape.size < MIN_TOKENS || best.shape.size < MIN_TOKENS) &&
+    (best.score < 1 || (rival?.score ?? 0) >= 0.6)
+  )
+    return null;
   return { name: best.name, score: best.score };
 }
 
@@ -389,7 +395,14 @@ export async function resolveBinding(
   for (const [specifier, file] of await reader.subpaths(hints)) {
     const exports = [...(await reader.exportsOf(file))].map(([name, s]) => ({ name, shape: s }));
     const hit = bestExport(shape, exports);
-    if (hit && (!best || hit.score > best.score)) best = { specifier, ...hit };
+    // On a tie the module that defines it beats a barrel that re-exports it (`Addons.js`).
+    if (
+      hit &&
+      (!best ||
+        hit.score > best.score ||
+        (hit.score === best.score && specifier.length > best.specifier.length))
+    )
+      best = { specifier, ...hit };
   }
   return best;
 }
@@ -534,7 +547,18 @@ export async function nameVendorBindings(
 export async function resolveVendorNames(
   projectDir: string,
   files: { file: string; bundle: string }[],
+  /** Library classes Stage 4 found inlined into site statements (`analysis/vendor-inline.json`). */
+  inlined: { name: string; text: string }[] = [],
 ): Promise<NamedBinding[]> {
+  const extra = new Map<string, t.Node>();
+  for (const i of inlined) {
+    try {
+      const stmt = parseCode(`(${i.text});`).program.body[0];
+      if (stmt?.type === "ExpressionStatement") extra.set(i.name, stmt.expression);
+    } catch {
+      // A fragment that no longer parses alone stays unnamed.
+    }
+  }
   const bundles = new Map<string, Map<string, t.Node>>();
   const readers = new Map<string, PackageReader>();
   const readerOf = (pkg: string) => {
@@ -552,6 +576,7 @@ export async function resolveVendorNames(
     let decls = bundles.get(bundle);
     if (!decls) {
       decls = bundleDeclarations(await readFile(bundle, "utf8").catch(() => ""));
+      for (const [k, v] of extra) decls.set(k, v);
       bundles.set(bundle, decls);
     }
     const result = await nameVendorBindings(code, decls, readerOf);

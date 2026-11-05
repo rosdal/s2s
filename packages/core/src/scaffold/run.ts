@@ -724,7 +724,10 @@ async function run(
         files.push({ file: path.join(paths.root, moved), bundle: path.join(paths.bodies, hash) });
     }
     const unique = [...new Map(files.map((f) => [f.file, f])).values()];
-    const named = await resolveVendorNames(paths.project, unique);
+    const inline = (await readJson<{ inlined: { name: string; text: string }[] }>(
+      path.join(paths.analysis, "vendor-inline.json"),
+    )) ?? { inlined: [] };
+    const named = await resolveVendorNames(paths.project, unique, inline.inlined);
     namedBindings = named.length;
     await writeJsonAtomic(path.join(paths.analysis, "vendor-names.json"), {
       named: named.map((n) => ({ ...n, file: posix(path.relative(paths.root, n.file)) })),

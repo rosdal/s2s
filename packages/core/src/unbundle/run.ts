@@ -17,7 +17,7 @@ import { buildGraph, type GraphInput, type ModulesFile } from "./graph.js";
 import { chunkName, loadInputs } from "./inputs.js";
 import { fixDefaultImports } from "./interop.js";
 import { PASSES, type PassName, type PassResult, transform } from "./passes.js";
-import { type ChunkTable, splitScope } from "./split.js";
+import { type ChunkTable, type InlinedVendor, splitScope } from "./split.js";
 import type { ChunkInput, Draft, ImportLine, UnpackContext } from "./types.js";
 import { vendorNamespaceLines } from "./vendor.js";
 import { unpackWebpack } from "./webpack.js";
@@ -228,6 +228,7 @@ async function run(
   );
   const ctx = await loadContext(paths);
   const inputs = await loadInputs(ctx);
+  const inlinedVendor: InlinedVendor[] = [];
   const unpackCtx: UnpackContext = {
     keepVendor: settings.keepVendor,
     heuristicSplit: settings.heuristicSplit,
@@ -295,6 +296,7 @@ async function run(
       );
       drafts.push(...split.drafts);
       tables.set(chunk.url, split.table);
+      inlinedVendor.push(...split.inlined);
     } catch (error) {
       warn(
         `${chunk.url}: could not be split (${(error as Error).message.split("\n")[0]}); kept whole`,
@@ -533,6 +535,10 @@ async function run(
   }
   const graph: ModulesFile = buildGraph(graphInputs, settings.maxGroupKb * 1024);
   await writeJsonAtomic(paths.modules, graph);
+  // Library classes the minifier inlined into site statements, for the scaffold to name.
+  await writeJsonAtomic(path.join(paths.analysis, "vendor-inline.json"), {
+    inlined: inlinedVendor,
+  });
 
   // 8. Styling, report, totals.
   const dom: string[] = [];

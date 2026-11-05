@@ -52,6 +52,16 @@ function INIT(cfg: { seed: number | null; full: boolean }): void {
     gpuAdapters: 0,
   };
   const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
+  // The browser's own frame callback, kept before a fake clock replaces it, so s2s can wait for
+  // real frames while the page's clock stands still.
+  const realFrame: ((cb: () => void) => number) | null =
+    typeof requestAnimationFrame === "function" ? requestAnimationFrame.bind(window) : null;
+  const drainTasks = () =>
+    new Promise<void>((resolve) => {
+      const channel = new MessageChannel();
+      channel.port1.onmessage = () => resolve();
+      channel.port2.postMessage(0);
+    });
 
   try {
     const proto = HTMLCanvasElement.prototype;
@@ -505,6 +515,14 @@ function INIT(cfg: { seed: number | null; full: boolean }): void {
     snapshot,
     programs() {
       return state.programs.slice();
+    },
+    /** Resolve after `n` real frames, then once the task queue has drained. */
+    async settle(n: number) {
+      for (let i = 0; i < n; i++) {
+        if (realFrame) await new Promise<void>((resolve) => realFrame(() => resolve()));
+        await drainTasks();
+      }
+      await drainTasks();
     },
     canvases() {
       return [...document.querySelectorAll("canvas")]

@@ -1,0 +1,13 @@
+{
+  "package": "lenis",
+  "patterns": [
+    {
+      "id": "class-names",
+      "regex": "lenis-(?:stopped|scrolling|smooth)",
+      "anchors": ["lenis"],
+      "minAnchors": 1,
+      "window": 2000,
+      "maxMatches": 1
+    }
+  ]
+}

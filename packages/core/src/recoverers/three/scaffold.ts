@@ -122,6 +122,18 @@ export default function s2sDecoders(): Plugin {
 `;
 }
 
+/** 3D formats a recovered module may import, beyond the ones Vite knows. */
+const EXTRA_ASSETS = [
+  "**/*.ktx2",
+  "**/*.basis",
+  "**/*.drc",
+  "**/*.exr",
+  "**/*.hdr",
+  "**/*.glb",
+  "**/*.gltf",
+  "**/*.bin",
+];
+
 const LAYOUT: Record<string, string> = {
   scene:
     "Scene setup: renderer, scene, cameras, lights, environment, the render loop. `graph.json` is the captured hierarchy at the first keyframe; keep its node names, verify compares them.",
@@ -177,6 +189,17 @@ export async function threeScaffold(ctx: ScaffoldHookContext): Promise<void> {
       (_, inner: string) => `plugins: [${inner ? `${inner}, ` : ""}s2sDecoders()]`,
     );
     await writeFileAtomic(configFile, config);
+  }
+
+  // 3D files Vite does not treat as assets on its own, so imports of them build.
+  {
+    const configFile = path.join(paths.project, "vite.config.ts");
+    const config = await readFile(configFile, "utf8");
+    if (!config.includes("assetsInclude"))
+      await writeFileAtomic(
+        configFile,
+        config.replace(/(\n\s*build: )/, `\n  assetsInclude: ${JSON.stringify(EXTRA_ASSETS)},$1`),
+      );
   }
 
   // 3. Layout folders, each saying what moves there, and the captured graph.

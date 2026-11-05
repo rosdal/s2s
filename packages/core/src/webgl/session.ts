@@ -18,8 +18,21 @@ export const SOFTWARE_GL_ARGS = [
 
 /** The fake clock starts here: 2023-11-14T22:13:20Z, a fixed instant. */
 export const CLOCK_START = 1_700_000_000_000;
+/** The clock is frozen this long after its start, before the page opens. */
+export const PAUSE_AT_MS = 1_000;
 /** Load runs on the frozen clock in steps of this many milliseconds. */
 export const LOAD_STEP_MS = 100;
+/**
+ * Real milliseconds the network must be quiet before each load step. Capture and verify use the
+ * same value, so a response and the decoding after it land on the same step in both.
+ */
+export const WEBGL_QUIET_MS = 300;
+/** Loading gives up waiting for a renderer after this long on the clock. */
+export const MAX_LOAD_MS = 20_000;
+/** Real frames the page gets after each clock step. */
+const SETTLE_FRAMES = 2;
+/** Real milliseconds between clock steps, for work outside the fake clock. */
+export const REAL_PAUSE_MS = 20;
 /** The walk starts no earlier than this long after the clock starts. */
 export const MIN_BASE_MS = 3_000;
 /** A scroll keyframe settles when two snapshots this far apart are equal, or after the cap. */
@@ -111,20 +124,26 @@ export async function loadDeterministic(
   } = {},
 ): Promise<{ baseMs: number; loadMs: number; finalUrl: string; timedOut: boolean }> {
   const clockStart = options.clockStart ?? CLOCK_START;
-  const quietMs = options.quietMs ?? 500;
+  const quietMs = options.quietMs ?? WEBGL_QUIET_MS;
   const timeoutMs = options.timeoutMs ?? 30_000;
+  // install() starts the clock running; pausing a full second later lands on an exact time
+  // however long the call took.
   await page.clock.install({ time: clockStart });
-  await page.clock.pauseAt(clockStart + 1);
+  await page.clock.pauseAt(clockStart + PAUSE_AT_MS);
   const net = networkWatch(page);
   const deadline = Date.now() + timeoutMs;
   await page.goto(url, { waitUntil: "load", timeout: timeoutMs }).catch((error: Error) => {
     if (!page.url().startsWith("http")) throw error;
   });
-  let elapsed = 1;
+  let elapsed = PAUSE_AT_MS;
   let calm = 0;
   let timedOut = false;
-  const cap = options.baseMs ?? 20_000;
-  while (elapsed < cap) {
+  let loadMs: number | undefined;
+  let baseMs = options.baseMs;
+  // Capture and verify step the same way all the way to the base time: wait for the network to go
+  // quiet (which also gives decoding and parsing that follow a response time to finish), then one
+  // clock step. Only the end differs: capture picks the base once the page is loaded.
+  while (elapsed < (baseMs ?? MAX_LOAD_MS)) {
     if (!(await net.quiet(quietMs, deadline))) {
       timedOut = true;
       break;
@@ -132,18 +151,71 @@ export async function loadDeterministic(
     const before = net.started();
     await page.clock.runFor(LOAD_STEP_MS);
     elapsed += LOAD_STEP_MS;
-    await new Promise((r) => setTimeout(r, 30));
-    if (net.started() === before) {
-      calm++;
-      // Two quiet steps in a row and nothing new requested: loaded.
-      if (calm >= 2 && options.baseMs === undefined) break;
-    } else calm = 0;
+    await settle(page);
+    if (net.started() !== before) {
+      calm = 0;
+      continue;
+    }
+    calm++;
+    // Two quiet steps in a row, nothing new requested and a renderer up (React Three Fiber
+    // creates its renderer only after a few rounds of layout and scheduling): loaded.
+    if (loadMs === undefined && calm >= 2 && (await rendering(page))) {
+      loadMs = elapsed;
+      // A second of margin, rounded to whole two seconds, so a load a step slower or faster on
+      // another run still lands on the same base time.
+      baseMs ??= Math.max(MIN_BASE_MS, Math.ceil((loadMs + 1000) / 2000) * 2000);
+    }
   }
-  const loadMs = elapsed;
-  const baseMs = options.baseMs ?? Math.max(MIN_BASE_MS, Math.ceil(loadMs / 1000) * 1000);
-  if (elapsed < baseMs) await page.clock.runFor(baseMs - elapsed);
+  loadMs ??= elapsed;
+  baseMs ??= Math.max(MIN_BASE_MS, Math.ceil((loadMs + 1000) / 2000) * 2000);
+  if (elapsed < baseMs) await advance(page, baseMs - elapsed);
   await net.quiet(quietMs, Date.now() + 5_000);
   return { baseMs, loadMs, finalUrl: page.url(), timedOut };
+}
+
+/** Whether the page has a three renderer (or no instrumentation to ask). */
+async function rendering(page: Page): Promise<boolean> {
+  return page
+    .evaluate(() => {
+      const api = (
+        window as unknown as {
+          __s2sWebgl?: { summary(): { renderers: number; contexts: Record<string, number> } };
+        }
+      ).__s2sWebgl;
+      if (!api) return true;
+      const s = api.summary();
+      return s.renderers > 0 || (s.contexts.webgpu ?? 0) > 0;
+    })
+    .catch(() => true);
+}
+
+/**
+ * Move the frozen clock forward in fixed steps with a short real pause between them, so work the
+ * fake clock doesn't drive (React's scheduler runs on MessageChannel, ResizeObserver on real
+ * frames) gets to run between timer ticks, the same way on every run.
+ */
+export async function advance(page: Page, ms: number): Promise<void> {
+  for (let left = ms; left > 0; left -= LOAD_STEP_MS) {
+    await page.clock.runFor(Math.min(LOAD_STEP_MS, left));
+    await settle(page);
+  }
+}
+
+/**
+ * Let the page catch up in real time after a clock step: two real frames (layout, resize
+ * observers) and a drained task queue (React's scheduler), the same amount on every run.
+ */
+export async function settle(page: Page): Promise<void> {
+  await page
+    .evaluate(
+      (n) =>
+        (
+          window as unknown as { __s2sWebgl?: { settle(n: number): Promise<void> } }
+        ).__s2sWebgl?.settle(n),
+      SETTLE_FRAMES,
+    )
+    .catch(() => {});
+  await new Promise((r) => setTimeout(r, REAL_PAUSE_MS));
 }
 
 export function snapshotOf(page: Page): Promise<SceneSnapshot | null> {
@@ -187,11 +259,12 @@ export async function walkKeyframes(
   const plan = planKeyframes(spec, await scrollSteps(page), options.maxKeyframes);
   let clockMs = options.baseMs;
   const vh = await page.evaluate(() => window.innerHeight);
-  const settle = async () => {
+  const settleScroll = async () => {
     let previous = JSON.stringify(await snapshotOf(page));
     let stable = 0;
     for (let waited = 0; waited < SETTLE_MAX_MS; waited += SETTLE_STEP_MS) {
       await page.clock.runFor(SETTLE_STEP_MS);
+      await settle(page);
       clockMs += SETTLE_STEP_MS;
       const next = JSON.stringify(await snapshotOf(page));
       stable = next === previous ? stable + 1 : 0;
@@ -204,14 +277,14 @@ export async function walkKeyframes(
     if (keyframe.kind === "time") {
       const target = options.baseMs + keyframe.value;
       if (target > clockMs) {
-        await page.clock.runFor(target - clockMs);
+        await advance(page, target - clockMs);
         clockMs = target;
       }
     } else {
       await page.evaluate((y) => window.scrollTo(0, y), keyframe.value * vh);
       // Scroll events are dispatched on real frames; give the browser one before stepping.
       await new Promise((r) => setTimeout(r, 60));
-      await settle();
+      await settleScroll();
     }
     // Let the compositor present the last frame before the screenshot.
     await new Promise((r) => setTimeout(r, 60));

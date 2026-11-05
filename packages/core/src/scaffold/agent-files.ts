@@ -77,15 +77,14 @@ export function agentsMd(f: AgentFacts): string {
       ? `\nThe site was built with ${f.fallbackFrom}. This scaffold is a Vite single-page app built from the hydrated DOM, not a ${f.fallbackFrom} project: keep the pages working as an SPA and don't add ${f.fallbackFrom}.`
       : null,
     "",
-    f.framework
-      ? lines(
-          "",
+    ...(f.framework
+      ? [
           `## ${FRAMEWORK_TITLE[f.framework.name] ?? f.framework.name}`,
           "",
           ...f.framework.lines,
-        ).trimEnd()
-      : null,
-    "",
+          "",
+        ]
+      : []),
     "## Packages",
     "",
     `Installed in \`project/package.json\` (see \`analysis/packages.json\`):`,

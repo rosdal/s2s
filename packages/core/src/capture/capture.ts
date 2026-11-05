@@ -7,6 +7,7 @@ import { decodePng, dynamicMask } from "../verify/image.js";
 import { type WebglIndex, webglPass } from "../webgl/capture-pass.js";
 import { webglInitScript } from "../webgl/init-script.js";
 import { DEFAULT_MAX_KEYFRAMES, parseKeyframes } from "../webgl/keyframes.js";
+import { WEBGL_QUIET_MS } from "../webgl/session.js";
 import { BodyStore } from "./body-store.js";
 import { launchBrowser } from "./browser.js";
 import { collectCdnPackages } from "./cdn.js";
@@ -446,7 +447,7 @@ export async function capture(options: CaptureOptions): Promise<CaptureResult> {
           keyframes: keyframePlan,
           keyframesSpec: opts.keyframes,
           maxKeyframes: opts.maxKeyframes,
-          quietMs: Math.min(opts.quietMs, 500),
+          quietMs: WEBGL_QUIET_MS,
           phaseTimeoutMs: opts.phaseTimeoutMs,
           ...(options.authState ? { authState: options.authState } : {}),
           ...(options.headless !== undefined ? { headless: options.headless } : {}),

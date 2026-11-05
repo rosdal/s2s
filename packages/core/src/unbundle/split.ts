@@ -19,7 +19,7 @@ import {
   type ImportLine,
   type UnpackContext,
 } from "./types.js";
-import { coveringPackage, vendorImport, wrapperEdits } from "./vendor.js";
+import { coveringPackage, vendorImport, vendorNamespace, wrapperEdits } from "./vendor.js";
 
 /** One statement of the scope being split. */
 interface Unit {
@@ -155,8 +155,9 @@ export function splitScope(
   chunk: ChunkInput,
   ctx: UnpackContext,
   mode: SplitMode,
-): { drafts: Draft[]; table: ChunkTable } {
+): { drafts: Draft[]; table: ChunkTable; inlined: InlinedVendor[] } {
   const code = chunk.code;
+  const inlined: InlinedVendor[] = [];
   const ast = parseCode(code);
   let container: NodePath<t.Program> | NodePath<t.BlockStatement> | undefined;
   let programPath: NodePath<t.Program> | undefined;
@@ -169,7 +170,7 @@ export function splitScope(
       functions.push(path);
     },
   });
-  const empty = { drafts: [], table: { entry: null, exports: new Map() } };
+  const empty = { drafts: [], table: { entry: null, exports: new Map() }, inlined: [] };
   if (!programPath) return empty;
   container = programPath;
   // A whole-file IIFE (esbuild's `(() => {…})()`, webpack-free scripts) holds the real top level.
@@ -403,8 +404,25 @@ export function splitScope(
       if (!span) continue;
       const call = wrapperCall(unit.node);
       const d = (unit.node as t.VariableDeclaration).declarations?.[0];
+      const inline = inlinedVendorClass(unit.node);
+      const readOutside =
+        inline &&
+        (refsOf.get(inline.name) ?? []).some(
+          (pos) => (pos < unit.start || pos >= unit.end) && !coveringPackage(rest, pos, pos + 1, 1),
+        );
       if (call && cjs.has(call.helper) && d?.id.type === "Identifier" && d.init) {
         toGetter(d.id.name, start(d.init), end(d.init), vendorImport(span));
+      } else if (inline && readOutside) {
+        // `var r = new class extends …{…}(opts)`: a library class the minifier inlined into the
+        // site's one `new`. The site's statement stays; the class becomes an import, named after
+        // install (analysis/vendor-inline.json).
+        const name = `${vendorNamespace(span.package)}$inline${inlined.length + 1}`;
+        unit.edits.push({ start: inline.start, end: inline.end, text: name });
+        vendorImports.set(unit.index, [
+          ...(vendorImports.get(unit.index) ?? []),
+          { ...vendorImport(span), namespace: name },
+        ]);
+        inlined.push({ name, package: span.package, text: code.slice(inline.start, inline.end) });
       } else {
         unit.dropped = { package: span.package, version: span.version };
       }
@@ -615,7 +633,30 @@ export function splitScope(
   return {
     drafts,
     table: { entry: entryPart === undefined ? null : keyOf(entryPart), exports: chunkExports },
+    inlined,
   };
+}
+
+/** A library class or function a minifier inlined into a site statement, replaced by an import. */
+export interface InlinedVendor {
+  /** The placeholder binding the recovered code reads. */
+  name: string;
+  package: string;
+  /** The inlined expression's source, for naming it after install. */
+  text: string;
+}
+
+/** `var r = new class …{…}(…)` (or `new function…`): the inlined callee's span and the binding. */
+function inlinedVendorClass(
+  node: t.Statement,
+): { name: string; start: number; end: number } | undefined {
+  if (node.type !== "VariableDeclaration" || node.declarations.length !== 1) return undefined;
+  const d = node.declarations[0];
+  const init = d?.init;
+  if (d?.id.type !== "Identifier" || init?.type !== "NewExpression") return undefined;
+  const callee = init.callee;
+  if (callee.type !== "ClassExpression" && callee.type !== "FunctionExpression") return undefined;
+  return { name: d.id.name, start: start(callee), end: end(callee) };
 }
 
 function isModuleSyntaxOnly(unit: Unit): boolean {

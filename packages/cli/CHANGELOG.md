@@ -1,5 +1,12 @@
 # @rosdal/s2s
 
+## 0.2.1
+
+### Patch Changes
+
+- 588c88a: Detection no longer guesses a version whose peer ranges reject the peers the site really has: `jotai-scope` steps back from 0.12.2 to 0.8.3 when the bundle pins `jotai` 2.11.0, so a pnpm scaffold of Excalidraw installs and builds. A failed build now shows the lines that report the failure instead of the first 50 lines of output.
+- 588c88a: The live stage list no longer flashes or freezes. Each frame is repainted in one write instead of clearing the block first, the cursor is hidden while it draws, and unbundle and maps give the spinner a turn between bundles, with unbundle showing how many chunks it has split.
+
 ## 0.2.0
 
 ### Minor Changes

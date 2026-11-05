@@ -1,6 +1,6 @@
 {
   "name": "@rosdal/s2s",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Turn a live URL into a buildable reconstruction of its frontend source.",
   "license": "MIT",
   "author": "Rosdal",

@@ -94,11 +94,11 @@ On a three.js site (vanilla or React Three Fiber), capture also records the scen
 
 The scaffold keeps the structure and lets you choose what happens to the art with `--assets`:
 
-| Mode              | Models, textures and sounds in `project/`                                                    | Verify compares                   |
-| ----------------- | -------------------------------------------------------------------------------------------- | --------------------------------- |
-| `proxy` (default) | Generated stand-ins: boxes, spheres and cylinders with the original names, bounds and animations; flat materials; silent audio | Scene snapshots at every keyframe |
-| `clone`           | The originals simplified (`--clone-ratio`, default 0.25), textures downscaled (`--clone-texture`, default 512 px) | Snapshots, and canvas pixels within 8% |
-| `original`        | The captured files, unchanged                                                                | Snapshots, and canvas pixels within 3% |
+| Mode              | Models, textures and sounds in `project/`                                                                                      | Verify compares                        |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------- |
+| `proxy` (default) | Generated stand-ins: boxes, spheres and cylinders with the original names, bounds and animations; flat materials; silent audio | Scene snapshots at every keyframe      |
+| `clone`           | The originals simplified (`--clone-ratio`, default 0.25), textures downscaled (`--clone-texture`, default 512 px)              | Snapshots, and canvas pixels within 8% |
+| `original`        | The captured files, unchanged                                                                                                  | Snapshots, and canvas pixels within 3% |
 
 Only `proxy` leaves the site's art out of the project, and it checks that no original file ended up there. `clone` and `original` are for local study only, and every file s2s writes in those modes says so. Custom shaders come back as `.glsl` files imported with `?raw`, with three's built-in chunks folded back to `#include` lines. `ASSETS.md` lists each asset with the scene nodes and code that use it and what a replacement has to keep.
 

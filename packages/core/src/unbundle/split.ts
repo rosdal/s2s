@@ -45,6 +45,53 @@ interface Unit {
   aliasOf?: { name: string; target: string; start: number; end: number };
 }
 
+/**
+ * In a scope-hoisted bundle a library is one stretch of statements; the fingerprint index can miss
+ * some of them, which leaves library internals in the site's code. A run of kept statements
+ * between two dropped statements of the same package is that package's own code when it assigns
+ * the package's bindings (site code only calls a library), or when the package's dropped code
+ * references it and nothing else kept outside the run does. Repeated until nothing changes.
+ */
+export function absorbWedged(units: Unit[]): void {
+  const usedBy = new Map<number, Set<number>>();
+  for (const u of units)
+    for (const at of u.uses.values()) {
+      const set = usedBy.get(at) ?? new Set<number>();
+      set.add(u.index);
+      usedBy.set(at, set);
+    }
+  for (let changed = true; changed; ) {
+    changed = false;
+    let i = 0;
+    while (i < units.length) {
+      const before = units[i - 1]?.dropped;
+      if ((units[i] as Unit).dropped || !before?.package) {
+        i++;
+        continue;
+      }
+      let j = i;
+      while (j < units.length && !(units[j] as Unit).dropped) j++;
+      const after = units[j]?.dropped;
+      const run = units.slice(i, j);
+      if (after?.package === before.package && run.every((u) => u.exported.length === 0)) {
+        const inRun = new Set(run.map((u) => u.index));
+        const ofPackage = (k: number) => units[k]?.dropped?.package === before.package;
+        const writesPackage = run.some((u) => [...u.writes].some(ofPackage));
+        const calledByPackage =
+          run.some((u) => [...(usedBy.get(u.index) ?? [])].some(ofPackage)) &&
+          run.every((u) =>
+            [...(usedBy.get(u.index) ?? [])].every((k) => inRun.has(k) || units[k]?.dropped),
+          );
+        if (writesPackage || calledByPackage) {
+          for (const u of run) u.dropped = { package: before.package, version: before.version };
+          changed = true;
+        }
+      }
+      i = j;
+    }
+  }
+}
+
 /** A CommonJS wrapper whose whole body is `module.exports = other()`. */
 function aliasOf(node: t.Statement): Unit["aliasOf"] {
   if (node.type !== "VariableDeclaration" || node.declarations.length !== 1) return undefined;
@@ -362,6 +409,7 @@ export function splitScope(
         unit.dropped = { package: span.package, version: span.version };
       }
     }
+    absorbWedged(units);
     for (let changed = true; changed; ) {
       changed = false;
       for (const unit of units) {

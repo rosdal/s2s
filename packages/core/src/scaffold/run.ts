@@ -46,6 +46,7 @@ import {
   viteConfig,
   WORKSPACE_GITIGNORE,
 } from "./templates.js";
+import { resolveVendorNames } from "./vendor-names.js";
 import { findWorkspacePackages, workspaceEntry } from "./workspaces.js";
 
 export interface ScaffoldOptions {
@@ -704,6 +705,27 @@ async function run(
     if (result.exitCode !== 0)
       warn(`${pm} install exited with ${result.exitCode}; see analysis/scaffold-install.log.`);
   }
+  // With the packages installed, name what the recovered code used of each inlined library.
+  let namedBindings = 0;
+  if (install === "passed") {
+    const files: { file: string; bundle: string }[] = [];
+    for (const m of report.modules) {
+      const moved = moves.get(m.file.toLowerCase());
+      const hash = bodyOf.get(m.chunk);
+      if (moved && hash)
+        files.push({ file: path.join(paths.root, moved), bundle: path.join(paths.bodies, hash) });
+    }
+    const unique = [...new Map(files.map((f) => [f.file, f])).values()];
+    const named = await resolveVendorNames(paths.project, unique);
+    namedBindings = named.length;
+    await writeJsonAtomic(path.join(paths.analysis, "vendor-names.json"), {
+      named: named.map((n) => ({ ...n, file: posix(path.relative(paths.root, n.file)) })),
+    });
+    if (named.length > 0)
+      warn(
+        `Named ${named.length} binding(s) of inlined libraries after install (${[...new Set(named.map((n) => n.package))].join(", ")}); see analysis/vendor-names.json.`,
+      );
+  }
   if (options.build !== false && install !== "failed") {
     signal?.throwIfAborted();
     progress({ kind: "step", step: "build" });
@@ -759,6 +781,7 @@ async function run(
       groups: graph.groups.length,
       entryModules: mainModules.length,
       notes,
+      namedBindings,
     },
   };
 }

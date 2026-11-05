@@ -20,6 +20,14 @@ export const MAX_VENDOR_OVERLAP = 0.4;
 const STRING_WEIGHT = 0.5;
 /** Matched functions this close together (in characters) are one vendor range. */
 const CLUSTER_GAP = 1024;
+/**
+ * A longer gap still joins two clusters when the code in it holds at most this many functions
+ * no package claims (and none another package does), within this many characters: in a
+ * scope-hoisted bundle a library is one stretch, broken only by its data (three's shader chunks)
+ * and by functions the index missed. A site module wedged in between has more than that.
+ */
+const BRIDGE_MAX_FUNCTIONS = 4;
+const BRIDGE_MAX_CHARS = 4096;
 /** A vendor range needs at least this many matched functions, so one stray hit drops no code. */
 const MIN_CLUSTER_FUNCTIONS = 2;
 
@@ -381,20 +389,23 @@ function bundleMatches(
     const myStrings = p.strings.filter((s) => strings.has(s.hash));
     if (mine.length === 0 && myStrings.length === 0) continue;
     // Other packages' functions bound a cluster: vendor code of two packages never merges.
-    const others = p.functions
-      .filter(
+    const othersSet = new Set(
+      p.functions.filter(
         (f) =>
           !functions.has(f.hash) &&
           accepted.some((a) => a.name !== name && a.functions.has(f.hash)),
-      )
-      .map((f) => f.start)
-      .sort((a, b) => a - b);
+      ),
+    );
+    const others = [...othersSet].map((f) => f.start).sort((a, b) => a - b);
+    const unclaimed = outermost(
+      p.functions.filter((f) => !functions.has(f.hash) && !othersSet.has(f)),
+    );
     out.push({
       id: bundle.id,
       url: bundle.url,
       functions: new Set(mine.map((f) => f.hash)).size,
       strings: new Set(myStrings.map((s) => s.hash)).size,
-      ranges: cluster(outermost(mine), others),
+      ranges: cluster(outermost(mine), others, unclaimed),
       first: Math.min(...mine.map((f) => f.start), ...myStrings.map((s) => s.start)),
     });
   }
@@ -413,12 +424,27 @@ function outermost(spans: { start: number; end: number }[]): { start: number; en
   return out;
 }
 
-function cluster(spans: { start: number; end: number }[], others: number[]): MatchRange[] {
+function cluster(
+  spans: { start: number; end: number }[],
+  others: number[],
+  unclaimed: { start: number; end: number }[] = [],
+): MatchRange[] {
   const out: MatchRange[] = [];
   let open: MatchRange | undefined;
+  const bridgeable = (from: number, to: number) => {
+    let count = 0;
+    let chars = 0;
+    for (const u of unclaimed) {
+      if (u.start < from || u.start >= to) continue;
+      count++;
+      chars += u.end - u.start;
+      if (count > BRIDGE_MAX_FUNCTIONS || chars > BRIDGE_MAX_CHARS) return false;
+    }
+    return true;
+  };
   for (const s of spans) {
     const blocked = open && others.some((o) => o >= (open as MatchRange).end && o < s.start);
-    if (open && !blocked && s.start - open.end <= CLUSTER_GAP) {
+    if (open && !blocked && (s.start - open.end <= CLUSTER_GAP || bridgeable(open.end, s.start))) {
       open.end = Math.max(open.end, s.end);
       open.functions++;
       continue;

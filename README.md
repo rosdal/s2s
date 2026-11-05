@@ -6,7 +6,27 @@
 
 s2s turns a live URL into a plausible, buildable reconstruction of its frontend source. The CLI does the deterministic work: it captures the page in a real browser, recovers source maps, detects third-party packages, unbundles and cleans up the first-party code, and scaffolds a project. Then it writes `AGENTS.md` and `PROMPT.md`, so the reasoning-heavy part (naming, structure, types) runs in Claude Code on your own subscription, with a screenshot-diff verify loop to check the result.
 
-> **Status: alpha.** Every stage runs end to end on the test fixtures. Expect rough edges on real sites.
+**[Project page with the full showcase →](https://rosdal.github.io/s2s/)**
+
+![A real s2s grab run against excalidraw.com: capture, maps, detect, unbundle, scaffold and verify all pass, then a summary and the Claude Code command to run next](docs/assets/grab.gif)
+
+> **Status: alpha.** Every stage runs end to end on the test fixtures and on real sites like excalidraw.com. Expect rough edges.
+
+## Showcase: excalidraw.com
+
+One `s2s grab https://excalidraw.com/` took about four minutes: 133 source maps, 1,047 recovered source files, 107 detected packages, and a Vite project that installed and built on the first try. A Claude Code session then worked through `PROMPT.md` group by group, and `s2s verify` stayed green across all 51 commits.
+
+![excalidraw.com as captured, next to the rebuilt project served by s2s verify. The two are identical: 0.00% pixel difference, DOM similarity 0.993](docs/assets/verify-desktop.png)
+
+The rebuilt project is the working app, not a picture of it:
+
+![The rebuilt Excalidraw in use: drawing a rectangle, an ellipse and an arrow, typing text, moving a shape, freehand drawing and switching to dark mode](docs/assets/excalidraw-rebuilt.gif)
+
+What the browser received, and what s2s recovered from it:
+
+![Left: one minified line of the shipped bundle. Right: the recovered actionToggleGridMode.tsx with its original imports, names and path](docs/assets/code-before-after.png)
+
+Excalidraw is an easy target: its source maps carry the original files, so 700 first-party modules came back exactly and the renaming pass never ran. Without source maps, names and module boundaries are guesses. CSS came from the compiled stylesheet rather than the original SCSS, and verify checks each page's first-load state, not every interaction. Excalidraw is MIT-licensed; it is shown here as a reconstruction target, with no affiliation.
 
 ## Usage
 
@@ -21,10 +41,6 @@ npx @rosdal/s2s grab https://example.com
 ```sh
 cd example-com && claude "$(cat PROMPT.md)"
 ```
-
-![A recorded s2s grab run against the vite-react test fixture: capture, maps, detect, unbundle, scaffold, then a passing verify and the Claude Code command](.github/assets/demo.svg)
-
-The recording is a real run against a local test fixture (`.github/assets/demo.cast`; replay it with `asciinema play`).
 
 Run `s2s` with no arguments for a guided prompt instead. Each stage is also its own command, and every stage resumes from the workspace's `manifest.json`, so rerunning `grab` after an interruption continues where it stopped:
 

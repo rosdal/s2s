@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>s2s · Site-to-Source</title>
+<meta name="description" content="s2s turns a live URL into a buildable reconstruction of its frontend source, then hands the naming and structure to Claude Code with a screenshot-diff verify loop.">
+<meta property="og:title" content="s2s · Site-to-Source">
+<meta property="og:description" content="Turn a live URL into a buildable reconstruction of its frontend source.">
+<meta property="og:image" content="https://rosdal.github.io/s2s/assets/verify-desktop.png">
+<style>
+:root {
+  --bg: #ffffff;
+  --bg-soft: #f6f8fa;
+  --fg: #1f2328;
+  --muted: #59636e;
+  --line: #d1d9e0;
+  --accent: #1a7f37;
+  --accent-soft: #dafbe1;
+  --warn: #9a6700;
+  --code-bg: #0d1117;
+  --code-fg: #e6edf3;
+  --radius: 10px;
+  --mono: "Cascadia Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117;
+    --bg-soft: #151b23;
+    --fg: #e6edf3;
+    --muted: #9198a1;
+    --line: #2b323b;
+    --accent: #3fb950;
+    --accent-soft: #12261e;
+    --warn: #d29922;
+    --code-bg: #010409;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 var(--sans); }
+a { color: inherit; text-underline-offset: 3px; }
+img { max-width: 100%; height: auto; display: block; }
+code { font-family: var(--mono); font-size: .9em; background: var(--bg-soft); border: 1px solid var(--line); border-radius: 6px; padding: .05em .35em; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+header.top { border-bottom: 1px solid var(--line); }
+.top > .wrap { display: flex; align-items: center; justify-content: space-between; height: 56px; gap: 16px; }
+.brand { font-family: var(--mono); font-weight: 700; text-decoration: none; }
+.brand span { color: var(--muted); font-weight: 400; }
+nav { display: flex; gap: 20px; font-size: 14px; }
+nav a { text-decoration: none; color: var(--muted); }
+nav a:hover { color: var(--fg); }
+.hero { padding: 72px 0 40px; display: grid; grid-template-columns: 1fr 1.1fr; gap: 48px; align-items: center; }
+.hero h1 { font-size: clamp(32px, 5vw, 48px); line-height: 1.1; letter-spacing: -.02em; margin: 0 0 16px; }
+.hero p.lead { color: var(--muted); font-size: 18px; margin: 0 0 24px; max-width: 34em; }
+.install { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--code-bg); color: var(--code-fg); font-family: var(--mono); font-size: 14px; border-radius: var(--radius); padding: 12px 14px; max-width: 420px; }
+.install button { font: 12px var(--sans); background: transparent; color: #9198a1; border: 1px solid #3d444d; border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+.install button:hover { color: #e6edf3; border-color: #9198a1; }
+.badges { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+.badges span { border: 1px solid var(--line); border-radius: 99px; padding: 2px 10px; }
+.frame { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--code-bg); box-shadow: 0 12px 40px rgba(0,0,0,.12); }
+.frame img { width: 100%; }
+section { padding: 56px 0; border-top: 1px solid var(--line); }
+section h2 { font-size: 28px; letter-spacing: -.01em; margin: 0 0 8px; }
+section .sub { color: var(--muted); margin: 0 0 32px; max-width: 46em; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 0 0 32px; }
+.stat { border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; background: var(--bg-soft); }
+.stat b { display: block; font-size: 26px; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.stat span { color: var(--muted); font-size: 13px; }
+figure { margin: 0 0 40px; }
+figcaption { color: var(--muted); font-size: 14px; margin-top: 10px; }
+.pipeline { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; counter-reset: s; }
+.pipeline li { border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; counter-increment: s; }
+.pipeline li::before { content: counter(s); font-family: var(--mono); font-size: 12px; color: var(--accent); background: var(--accent-soft); border-radius: 99px; padding: 1px 8px; }
+.pipeline h3 { font-family: var(--mono); font-size: 15px; margin: 10px 0 4px; }
+.pipeline p { margin: 0; color: var(--muted); font-size: 14px; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
+.two h3 { font-size: 17px; margin: 0 0 8px; }
+.two ul { margin: 0; padding-left: 20px; color: var(--muted); }
+.two li { margin: 4px 0; }
+.note { border-left: 3px solid var(--warn); background: var(--bg-soft); padding: 12px 16px; border-radius: 0 var(--radius) var(--radius) 0; color: var(--muted); font-size: 15px; margin: 0 0 32px; }
+.note b { color: var(--fg); }
+pre.block { background: var(--code-bg); color: var(--code-fg); font: 14px/1.6 var(--mono); padding: 16px; border-radius: var(--radius); overflow-x: auto; margin: 0 0 16px; }
+pre.block .c { color: #7d8590; }
+footer { border-top: 1px solid var(--line); padding: 32px 0 48px; color: var(--muted); font-size: 14px; }
+.foot {  display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+@media (max-width: 860px) {
+  .hero { grid-template-columns: 1fr; padding-top: 40px; gap: 32px; }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .pipeline { grid-template-columns: 1fr; }
+  .two { grid-template-columns: 1fr; }
+  nav a.opt { display: none; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./">s2s <span>site → source</span></a>
+    <nav>
+      <a class="opt" href="#showcase">Showcase</a>
+      <a class="opt" href="#how">How it works</a>
+      <a class="opt" href="#limits">Limits</a>
+      <a href="https://github.com/Rosdal/s2s">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="hero">
+    <div>
+      <h1>Turn a live URL into source you can build.</h1>
+      <p class="lead">s2s captures a site in a real browser, recovers its source maps, detects its npm packages, unbundles the rest and writes a Vite project that builds as is. Then Claude Code does the naming, structure and types, checked by a screenshot-diff verify loop after every step.</p>
+      <div class="install"><span id="cmd">npx @rosdal/s2s grab https://example.com</span><button type="button" id="copy">Copy</button></div>
+      <div class="badges"><span>alpha</span><span>MIT</span><span>Node 22.15+</span><span>runs locally</span></div>
+    </div>
+    <div class="frame"><img src="assets/grab.gif" width="883" height="740" alt="A real s2s grab run against excalidraw.com: capture, maps, detect, unbundle, scaffold and verify all pass, followed by a summary box and the Claude Code command to run next."></div>
+  </div>
+
+  <section id="showcase">
+    <h2>Showcase: excalidraw.com</h2>
+    <p class="sub">One <code>s2s grab https://excalidraw.com/</code> run, then a Claude Code session working through the generated <code>PROMPT.md</code>. The numbers below come from the workspace's <code>manifest.json</code> and <code>verify/report.md</code>.</p>
+
+    <div class="stats">
+      <div class="stat"><b>1,047</b><span>source files recovered from 133 source maps</span></div>
+      <div class="stat"><b>107</b><span>npm packages detected</span></div>
+      <div class="stat"><b>0.00%</b><span>pixel difference, desktop and mobile</span></div>
+      <div class="stat"><b>~4 min</b><span>from URL to a project that builds</span></div>
+    </div>
+
+    <figure>
+      <img src="assets/verify-desktop.png" width="2800" height="1090" loading="lazy" alt="Two screenshots side by side: excalidraw.com as captured on the left, the rebuilt project on the right. They are identical.">
+      <figcaption>Left: the capture. Right: the rebuilt project, served by <code>s2s verify</code> with the captured responses replayed. Verify never contacts the real site.</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><img src="assets/excalidraw-rebuilt.gif" width="900" height="525" loading="lazy" alt="The rebuilt Excalidraw in use: drawing a rectangle, an ellipse and an arrow, typing text, moving a shape, freehand drawing and switching to dark mode."></div>
+      <figcaption>The rebuilt project is the app, not a screenshot of it. Drawing, text, bound arrows, freehand and dark mode all run from the reconstructed source.</figcaption>
+    </figure>
+
+    <figure>
+      <img src="assets/code-before-after.png" width="2560" height="1716" loading="lazy" alt="Left: a minified line of the shipped bundle, Nv=le({name:&quot;gridMode&quot;,...}). Right: the recovered TypeScript file actionToggleGridMode.tsx with its original imports and names.">
+      <figcaption>What the browser receives, and what s2s recovers from it. Excalidraw publishes source maps with full file contents, so this module came back exactly, original path and names included.</figcaption>
+    </figure>
+
+    <p class="note"><b>The honest caveat.</b> Excalidraw is close to the easiest target there is: its source maps carry the original files, so 700 first-party modules came back word for word and the renaming pass never ran. On a site without source maps, names and module boundaries are guesses that the agent improves but cannot know. CSS came from the compiled stylesheet, not the original SCSS, and verify only checks the first-load state of each page.</p>
+  </section>
+
+  <section id="how">
+    <h2>How it works</h2>
+    <p class="sub">The CLI does the deterministic work. Every stage writes into one workspace folder and resumes from its <code>manifest.json</code>, so an interrupted <code>grab</code> picks up where it stopped.</p>
+    <ol class="pipeline">
+      <li><h3>capture</h3><p>Loads each page in Chrome on desktop and mobile, records every request, DOM snapshot and screenshot, and fetches chunks the page never loaded.</p></li>
+      <li><h3>maps</h3><p>Recovers original sources from source maps, including inline maps and modules the bundler inlined without mappings.</p></li>
+      <li><h3>detect</h3><p>Identifies npm packages and versions from maps, banners, CDN URLs, version strings and AST fingerprints of about 1,000 packages.</p></li>
+      <li><h3>unbundle</h3><p>Splits first-party code into modules per bundler, un-minifies and de-transpiles it, and drops vendor code in favour of package imports.</p></li>
+      <li><h3>scaffold</h3><p>Writes a Vite project, installs it with scripts disabled, builds it once, and writes <code>AGENTS.md</code>, <code>PROMPT.md</code> and <code>PROGRESS.md</code>.</p></li>
+      <li><h3>verify</h3><p>Serves the build against the replayed capture and fails on more than 2% of pixels changed, DOM similarity under 0.95, new console errors or failed requests.</p></li>
+    </ol>
+  </section>
+
+  <section id="agent">
+    <h2>Then Claude Code takes over</h2>
+    <p class="sub">Naming, structure and types need judgement, so s2s leaves them to a coding agent running on your own subscription. The workspace tells it what to do and checks its work.</p>
+<pre class="block"><span class="c">$</span> cd excalidraw-com
+<span class="c">$</span> claude "$(cat PROMPT.md)"   <span class="c"># or run claude there and type /s2s</span></pre>
+    <div class="two">
+      <div>
+        <h3>What the agent gets</h3>
+        <ul>
+          <li><code>AGENTS.md</code>: the rules, the detected stack and packages, each fact linked to the <code>analysis/</code> file it came from.</li>
+          <li><code>PROGRESS.md</code>: one checklist item per work group, in dependency order, plus packages to review.</li>
+          <li><code>.claude/settings.json</code>: pre-approves <code>s2s verify</code>, the build, typecheck and git. Nothing else.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>How it works through them</h3>
+        <ul>
+          <li>Moves one group out of <code>src/_recovered/</code>, renames, types and splits it.</li>
+          <li>Runs <code>s2s verify</code>. On failure it fixes and retries. After three failures it reverts and notes why.</li>
+          <li>Commits per group, so the git history is the audit trail. On Excalidraw, verify stayed green across all 51 commits.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="limits">
+    <h2>Limits and intended use</h2>
+    <div class="two">
+      <div>
+        <h3>What it cannot do</h3>
+        <ul>
+          <li>Recover server code, APIs, environment variables, comments, tests or history. Only what a visitor's browser receives.</li>
+          <li>Rebuild Next.js, Nuxt, Astro or SvelteKit as projects in their own framework. They become a Vite single-page app.</li>
+          <li>Know original names without source maps.</li>
+          <li>Reach pages behind interactions the capture didn't trigger.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>What it is for</h3>
+        <ul>
+          <li>Learning how a site's frontend is built.</li>
+          <li>Analysing code that already runs in your browser.</li>
+          <li>Recovering frontend source you own but lost.</li>
+          <li>Not for reusing someone else's code, ignoring a site's terms, or getting past logins, paywalls, CAPTCHAs or bot protection. s2s keeps polite defaults: a rate limit, <code>robots.txt</code> and an honest user agent.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <span>MIT © Rosdal · <a href="https://www.npmjs.com/package/@rosdal/s2s">npm</a> · <a href="https://github.com/Rosdal/s2s">GitHub</a> · <a href="https://github.com/Rosdal/s2s/blob/main/docs/fingerprints.md">Fingerprints</a></span>
+    <span>Excalidraw is MIT-licensed, © Excalidraw. Shown here as a reconstruction target, not affiliated.</span>
+  </div>
+</footer>
+<script>
+document.getElementById("copy").addEventListener("click", async (e) => {
+  try {
+    await navigator.clipboard.writeText(document.getElementById("cmd").textContent);
+    e.target.textContent = "Copied";
+    setTimeout(() => { e.target.textContent = "Copy"; }, 1500);
+  } catch {}
+});
+</script>
+</body>
+</html>

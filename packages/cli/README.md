@@ -23,7 +23,9 @@ npx @rosdal/s2s grab https://example.com
 cd example-com && claude "$(cat PROMPT.md)"
 ```
 
-![A recorded s2s grab run: capture, maps, detect, unbundle, scaffold, then a passing verify and the Claude Code command](https://raw.githubusercontent.com/Rosdal/s2s/main/.github/assets/demo.svg)
+![A real s2s grab run against excalidraw.com: capture, maps, detect, unbundle, scaffold and verify all pass, then a summary and the Claude Code command](https://raw.githubusercontent.com/Rosdal/s2s/main/docs/assets/grab.gif)
+
+See the [project page](https://rosdal.github.io/s2s/) for a full walkthrough on excalidraw.com.
 
 Run `s2s` with no arguments for a guided prompt. Each stage is also its own command, and every stage resumes from the workspace's `manifest.json`, so rerunning `grab` after an interruption continues where it stopped:
 

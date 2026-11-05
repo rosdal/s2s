@@ -22,7 +22,7 @@
   --code-fg: #e6edf3;
   --radius: 10px;
   --mono: "Cascadia Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --sans: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+  --sans: system-ui, "Segoe UI", -apple-system, sans-serif;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -79,7 +79,7 @@ figcaption { color: var(--muted); font-size: 14px; margin-top: 10px; }
 .two h3 { font-size: 17px; margin: 0 0 8px; }
 .two ul { margin: 0; padding-left: 20px; color: var(--muted); }
 .two li { margin: 4px 0; }
-.note { border-left: 3px solid var(--warn); background: var(--bg-soft); padding: 12px 16px; border-radius: 0 var(--radius) var(--radius) 0; color: var(--muted); font-size: 15px; margin: 0 0 32px; }
+.note { border: 1px solid var(--line); background: var(--bg-soft); padding: 12px 16px; border-radius: var(--radius); color: var(--muted); font-size: 15px; margin: 0 0 32px; }
 .note b { color: var(--fg); }
 pre.block { background: var(--code-bg); color: var(--code-fg); font: 14px/1.6 var(--mono); padding: 16px; border-radius: var(--radius); overflow-x: auto; margin: 0 0 16px; }
 pre.block .c { color: #7d8590; }

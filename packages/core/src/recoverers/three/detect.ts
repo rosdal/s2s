@@ -6,7 +6,7 @@ export const ADDON_MARKERS: Record<string, RegExp> = {
     /THREE\.GLTFLoader|KHR_materials_emissive_strength|glTF versions >=2\.0 are supported/,
   DRACOLoader: /THREE\.DRACOLoader|draco_wasm_wrapper|draco_decoder/,
   KTX2Loader: /THREE\.KTX2Loader|basis_transcoder/,
-  MeshoptDecoder: /setMeshoptDecoder|EXT_meshopt_compression/,
+  MeshoptDecoder: /\.setMeshoptDecoder\(|meshopt_decoder/,
   RGBELoader: /THREE\.RGBELoader|#\?RADIANCE/,
   EXRLoader: /THREE\.EXRLoader|EXRLoader/,
   EffectComposer: /THREE\.EffectComposer|EffectComposer/,

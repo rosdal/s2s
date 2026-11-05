@@ -8,8 +8,9 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { type CaptureOptions, capture } from "../src/capture/capture.js";
 import { detect } from "../src/detect/run.js";
 import { maps } from "../src/maps/run.js";
+import { scaffold } from "../src/scaffold/run.js";
 import { unbundle } from "../src/unbundle/run.js";
-import { type FixtureName, serveFixture } from "./helpers/fixtures.js";
+import { FIXTURES_DIR, type FixtureName, serveFixture } from "./helpers/fixtures.js";
 
 let tmp: string;
 let pnpmVersion: string | undefined;
@@ -161,5 +162,54 @@ describe("three recoverer through unbundle", () => {
     expect(code).not.toContain("uniform float uTime;");
     // Built-in materials (the ground's MeshStandardMaterial) are not written out.
     expect(record.programs.some((p: { builtin: boolean }) => p.builtin)).toBe(true);
+  });
+});
+
+async function glbNodeNames(file: string): Promise<string[]> {
+  const { NodeIO } = await import("@gltf-transform/core");
+  const doc = await new NodeIO().readBinary(new Uint8Array(await readFile(file)));
+  return doc
+    .getRoot()
+    .listNodes()
+    .map((n) => n.getName())
+    .sort();
+}
+
+describe("three scaffold", () => {
+  test("three-basic proxy: builds, no original bytes in project/, same node names", async () => {
+    const dir = await copyOf(await unbundled("three-basic"));
+    const result = await scaffold({ workspace: dir, git: false, recoverer: { assets: "proxy" } });
+    expect(result.error).toBeUndefined();
+    expect(result.build, result.buildOutput).toBe("passed");
+    const assets = JSON.parse(await readFile(path.join(dir, "analysis", "assets.json"), "utf8"));
+    expect(assets.mode).toBe("proxy");
+    expect(assets.checks.leak).toEqual({ passed: true, files: [] });
+    const types = assets.assets.map(
+      (a: { type: string; url: string }) => `${a.type} ${new URL(a.url).pathname}`,
+    );
+    expect(types).toContain("model /models/hero.glb");
+    expect(types).toContain("texture /textures/ground.png");
+    const hero = assets.assets.find((a: { type: string }) => a.type === "model");
+    expect(hero.usedBy.nodes).toEqual(["World/Hero/Rig/Base", "World/Hero/Rig/Body"]);
+    expect(hero.usedBy.modules.length).toBeGreaterThan(0);
+    const original = path.join(FIXTURES_DIR, "three-basic", "dist", "models", "hero.glb");
+    expect(await glbNodeNames(path.join(dir, "project", "public", "models", "hero.glb"))).toEqual(
+      await glbNodeNames(original),
+    );
+    const md = await readFile(path.join(dir, "ASSETS.md"), "utf8");
+    expect(md).toContain("### hero.glb");
+    expect(md).toContain("- [ ] Replaced with my own");
+    expect(md).not.toContain("Local study only");
+    const agents = await readFile(path.join(dir, "AGENTS.md"), "utf8");
+    expect(agents).toContain("## three.js scene");
+    expect(agents).toContain("Never copy the site's original models");
+    expect(existsSync(path.join(dir, "project", "src", "shaders", "glow.vert.glsl"))).toBe(true);
+    expect(existsSync(path.join(dir, "project", "src", "scene", "graph.json"))).toBe(true);
+    const framework = JSON.parse(
+      await readFile(path.join(dir, "analysis", "framework.json"), "utf8"),
+    );
+    expect(framework.details.summary).toBe(
+      "three r187 · 1 model → proxies · 1 custom shader · 6 keyframes",
+    );
   });
 });

@@ -3,6 +3,8 @@ import {
   BrowserNotFoundError,
   type CaptureProgress,
   capture,
+  KeyframeSpecError,
+  parseKeyframes,
   RobotsDisallowedError,
   VIEWPORTS,
   type ViewportName,
@@ -67,6 +69,23 @@ async function pagesFile(file: string): Promise<string[]> {
     .filter((line) => line !== "" && !line.startsWith("#"));
 }
 
+/** `--keyframes`, checked here so a typo fails before the browser starts. */
+function keyframesFlag(value: string | undefined): string {
+  const spec = value?.trim() || "auto";
+  try {
+    parseKeyframes(spec);
+  } catch (error) {
+    if (error instanceof KeyframeSpecError) throw new UsageError(error.message);
+    throw error;
+  }
+  return spec;
+}
+
+/** citty reads `--flag=false` as the string "false". */
+function booleanFlag(value: unknown): boolean {
+  return !(value === false || value === "false" || value === "0" || value === "no");
+}
+
 /** "capture is already complete" reads as "already complete" next to the stage's name. */
 export function skipReason(reason: string): string {
   return reason.replace(/^\w+ is /, "");
@@ -120,6 +139,23 @@ export const captureArgs = {
     type: "string",
     description: "Milliseconds between the two screenshots that find dynamic regions (0: one shot)",
     default: "3000",
+  },
+  keyframes: {
+    type: "string",
+    description:
+      'WebGL keyframes: "auto" (0, 1 and 3 s, then one per viewport height of scroll) or a list like "t0,t1000,s1,s2"',
+    default: "auto",
+  },
+  "max-keyframes": {
+    type: "string",
+    description: "Most WebGL keyframes per page and viewport",
+    default: "24",
+  },
+  "webgl-deterministic": {
+    type: "boolean",
+    default: true,
+    description:
+      "On a WebGL page, recapture it on a frozen clock with software rendering for scene snapshots (--webgl-deterministic=false skips it)",
   },
   json: { type: "boolean", description: "Print only the result as JSON" },
 } as const;
@@ -249,6 +285,9 @@ export function captureRunner(io: CliIO, version: string, shared?: StageReporter
         quietMs: int("quiet-ms", args["quiet-ms"], 100) ?? 1000,
         phaseTimeoutMs: int("phase-timeout", args["phase-timeout"], 1000) ?? 30_000,
         maskDelayMs: int("mask-delay", args["mask-delay"]) ?? 3_000,
+        keyframes: keyframesFlag(args.keyframes),
+        maxKeyframes: int("max-keyframes", args["max-keyframes"], 1) ?? 24,
+        webglDeterministic: booleanFlag(args["webgl-deterministic"]),
         signal: controller.signal,
         onProgress,
       });

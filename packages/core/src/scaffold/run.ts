@@ -177,13 +177,17 @@ export async function scaffold(options: ScaffoldOptions): Promise<ScaffoldResult
     progress({ kind: "skip", workspace: root, reason: "scaffold is already complete" });
     const target = String(previous.details?.target ?? "vanilla");
     const build = String(previous.details?.build ?? "skipped");
+    const webglSummary = previous.details?.webglSummary;
     return {
       workspace: root,
       status: "complete",
       skipped: true,
       stats: previous.stats,
       warnings: previous.warnings,
-      summary: summaryLine(target, previous.stats, build),
+      summary:
+        typeof webglSummary === "string"
+          ? `${webglSummary} · build ${build}`
+          : summaryLine(target, previous.stats, build),
       target: target as Target,
       build,
     };
@@ -245,7 +249,11 @@ export async function scaffold(options: ScaffoldOptions): Promise<ScaffoldResult
   // The manifest changed after the commit; fold it in so the tree starts clean.
   if (outcome?.committed)
     await git(["commit", "-q", "--amend", "--no-edit", "-a"], root, outcome.fallbackIdentity);
-  const summary = summaryLine(outcome?.target ?? "unknown", stats, outcome?.build ?? "skipped");
+  const webglSummary = outcome?.recovererDetails.webglSummary;
+  const summary =
+    typeof webglSummary === "string"
+      ? `${webglSummary} · build ${outcome?.build ?? "skipped"}`
+      : summaryLine(outcome?.target ?? "unknown", stats, outcome?.build ?? "skipped");
   progress({ kind: "done", status, summary });
   return {
     workspace: root,

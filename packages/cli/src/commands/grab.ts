@@ -98,6 +98,7 @@ export function grabRunner(io: CliIO, version: string) {
       ["out", displayPath(workspace)],
     ];
     if (args.pm) facts.push(["pm", `${args.pm} ${t.dim("· from --pm")}`]);
+    if (args.assets) facts.push(["assets", args.assets]);
     io.stderr("");
     io.stderr(`${t.accent(t.bold("s2s"))}  ${t.muted("site → source")}  ${t.dim(`v${version}`)}`);
     io.stderr("");
@@ -107,6 +108,12 @@ export function grabRunner(io: CliIO, version: string) {
     ))
       io.stderr(line);
     io.stderr("");
+    if (args.assets === "clone" || args.assets === "original") {
+      io.stderr(
+        `${t.warn(`${symbols.warning} --assets ${args.assets}`)} ${t.muted("puts the site's own models, textures and sounds in project/: for local study only, never publish or share them.")}`,
+      );
+      io.stderr("");
+    }
 
     const names = ["capture", "maps", "detect", "unbundle", "scaffold"];
     if (args.verify !== false) names.push("verify");
@@ -227,6 +234,7 @@ async function finalSummary(
   const bundlerVersion = unbundle?.bundlerVersion ? ` ${unbundle.bundlerVersion}` : "";
   const scaffoldTarget = String(stages?.scaffold.details?.target ?? "vanilla");
   const build = String(stages?.scaffold.details?.build ?? "skipped");
+  const webglSummary = stages?.scaffold.details?.webglSummary;
 
   const lines: string[] = [];
   const title = t.accent(t.bold("Reconstruction ready"));
@@ -234,6 +242,10 @@ async function finalSummary(
   lines.push(
     `${title}${" ".repeat(Math.max(2, inner - visibleLength(title) - visibleLength(stack)))}${stack}`,
   );
+
+  if (typeof webglSummary === "string") lines.push("", `${t.muted("webgl")}  ${webglSummary}`);
+  if (stages?.scaffold.details?.localOnly === true)
+    lines.push(t.warn("assets are the site's own art: local study only (see ASSETS.md)"));
 
   // How much of the first-party code came back as written, renamed, or must be reconstructed.
   const exact = Math.min(1, n(maps, "coverageJs"));

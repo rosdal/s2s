@@ -22,6 +22,8 @@ export interface LaunchOptions {
   headless?: boolean;
   /** Explicit browser binary; defaults to `S2S_CHROME_PATH`. */
   executablePath?: string;
+  /** Extra Chromium switches, such as software WebGL for deterministic rendering. */
+  args?: string[];
 }
 
 function isMissingBrowser(error: unknown): boolean {
@@ -38,17 +40,18 @@ function isMissingBrowser(error: unknown): boolean {
  */
 export async function launchBrowser(options: LaunchOptions = {}): Promise<Browser> {
   const headless = options.headless ?? true;
+  const args = options.args ?? [];
   const executablePath = options.executablePath ?? process.env.S2S_CHROME_PATH;
   if (executablePath) {
     try {
-      return await chromium.launch({ headless, executablePath });
+      return await chromium.launch({ headless, executablePath, args });
     } catch (error) {
       throw new BrowserNotFoundError(error);
     }
   }
   const attempts = [
-    () => chromium.launch({ headless, channel: "chrome" }),
-    () => chromium.launch({ headless }),
+    () => chromium.launch({ headless, channel: "chrome", args }),
+    () => chromium.launch({ headless, args }),
   ];
   let lastError: unknown;
   for (const attempt of attempts) {

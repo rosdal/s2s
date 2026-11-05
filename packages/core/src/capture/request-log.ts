@@ -3,7 +3,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 
-export const Phase = z.enum(["load", "interact", "discover", "crawl"]);
+export const Phase = z.enum(["load", "interact", "discover", "crawl", "webgl"]);
 export type Phase = z.infer<typeof Phase>;
 
 export const OriginClass = z.enum([
@@ -45,6 +45,8 @@ export const RequestRecord = z.object({
   origin: OriginClass,
   redirectedTo: z.string().optional(),
   failure: z.string().optional(),
+  /** What s2s recognised the response as, such as `decoder:draco` or `asset:model`. */
+  tags: z.array(z.string()).optional(),
 });
 export type RequestRecord = z.infer<typeof RequestRecord>;
 
@@ -75,7 +77,9 @@ export class RequestLog {
 
   append(record: RequestRecord): void {
     if (!this.#stream) throw new Error("RequestLog is not open");
-    this.#stream.write(`${JSON.stringify(record)}\n`);
+    const tags = requestTags(record.url, record.mimeType);
+    const tagged = tags.length > 0 ? { ...record, tags } : record;
+    this.#stream.write(`${JSON.stringify(tagged)}\n`);
     this.count++;
   }
 
@@ -96,4 +100,33 @@ export async function readRequestLog(file: string): Promise<RequestRecord[]> {
     .split("\n")
     .filter((line) => line.trim() !== "")
     .map((line) => RequestRecord.parse(JSON.parse(line)));
+}
+
+const DECODERS: [string, RegExp][] = [
+  ["draco", /(?:^|\/)draco_(?:decoder|wasm_wrapper|encoder)(?:_gltf)?\.(?:js|wasm)$/i],
+  ["basis", /(?:^|\/)basis_transcoder\.(?:js|wasm)$/i],
+  ["meshopt", /(?:^|\/)meshopt_decoder(?:\.module)?\.(?:js|wasm)$/i],
+];
+
+const ASSETS: [string, RegExp][] = [
+  ["model", /\.(?:glb|gltf|fbx|obj|drc|usdz)$/i],
+  ["texture", /\.(?:ktx2|basis|dds)$/i],
+  ["environment", /\.(?:hdr|exr)$/i],
+  ["audio", /\.(?:mp3|ogg|oga|wav|m4a|aac|flac|opus|weba)$/i],
+];
+
+/** Tags for a request: WebGL decoders and 3D assets, recognised by their path. */
+export function requestTags(url: string, mimeType: string | null = null): string[] {
+  let pathname: string;
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    pathname = url;
+  }
+  const tags: string[] = [];
+  for (const [name, re] of DECODERS) if (re.test(pathname)) tags.push(`decoder:${name}`);
+  for (const [name, re] of ASSETS) if (re.test(pathname)) tags.push(`asset:${name}`);
+  if (tags.length === 0 && mimeType?.startsWith("audio/")) tags.push("asset:audio");
+  if (tags.length === 0 && mimeType === "model/gltf-binary") tags.push("asset:model");
+  return tags;
 }

@@ -6,6 +6,7 @@ import { type WorkspacePaths, workspacePaths } from "../capture/workspace.js";
 import { loadContext } from "../detect/context.js";
 import { breathe, writeFileAtomic, writeJsonAtomic } from "../fs-util.js";
 import { WorkspaceError } from "../maps/run.js";
+import { readFramework, recovererByName } from "../recoverers/registry.js";
 import { defaultAdapter, type LibraryAdapter } from "./adapter.js";
 import { assetIndex, planAssets, relativeFile, rewriteCssUrls, rewriteJsAssets } from "./assets.js";
 import { applyEdits, MODULE_PREFIX, parses, quote } from "./ast.js";
@@ -594,6 +595,10 @@ async function run(
     styles: cssOut.map((c) => ({ file: c.file, url: c.url, kind: c.kind, pages: c.pages })),
     exactSources: inputs.exact.map((e) => ({ file: e.file, chunk: e.chunkUrl, pages: e.pages })),
   });
+
+  // 9. The recoverer's own pass (three: shaders out of string literals into .glsl files).
+  const framework = await readFramework(paths);
+  await recovererByName(framework.recoverer).unbundleHints?.({ paths, framework, warn });
 
   const errors = reportModules.reduce((n, m) => n + m.errors.length, 0);
   if (errors > 0) warn(`${errors} transform error(s); see analysis/unbundle-report.json.`);

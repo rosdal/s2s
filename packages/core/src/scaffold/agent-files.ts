@@ -20,6 +20,8 @@ const lines = (...parts: (string | false | null | undefined)[]) =>
 
 export const VERIFY_COMMAND = "s2s verify";
 
+const FRAMEWORK_TITLE: Record<string, string> = { three: "three.js scene" };
+
 export function agentsMd(f: AgentFacts): string {
   const build = projectScript(f.packageManager, "build");
   const typecheck = projectScript(f.packageManager, "typecheck");
@@ -73,6 +75,15 @@ export function agentsMd(f: AgentFacts): string {
     ...stack,
     f.fallbackFrom
       ? `\nThe site was built with ${f.fallbackFrom}. This scaffold is a Vite single-page app built from the hydrated DOM, not a ${f.fallbackFrom} project: keep the pages working as an SPA and don't add ${f.fallbackFrom}.`
+      : null,
+    "",
+    f.framework
+      ? lines(
+          "",
+          `## ${FRAMEWORK_TITLE[f.framework.name] ?? f.framework.name}`,
+          "",
+          ...f.framework.lines,
+        ).trimEnd()
       : null,
     "",
     "## Packages",

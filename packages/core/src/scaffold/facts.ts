@@ -83,6 +83,8 @@ export interface AgentFacts {
   /** `// s2s:` notes left in the recovered code. */
   notes: number;
   thresholds: Thresholds;
+  /** A section from the chosen recoverer's `agentNotes`; absent for the generic recoverer. */
+  framework?: { name: string; lines: string[] };
 }
 
 /** `pnpm --dir project run build` and friends: one command form per manager, run from the workspace root. */

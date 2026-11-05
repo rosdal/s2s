@@ -12,6 +12,7 @@ import {
 } from "../detect/project.js";
 import { writeFileAtomic, writeJsonAtomic } from "../fs-util.js";
 import { WorkspaceError } from "../maps/run.js";
+import { readFramework, recovererByName } from "../recoverers/registry.js";
 import type { ModulesFile } from "../unbundle/graph.js";
 import { packageName } from "../unbundle/graph.js";
 import { loadThresholds } from "../verify/config.js";
@@ -59,6 +60,8 @@ export interface ScaffoldOptions {
   build?: boolean;
   /** `git init` and commit `s2s scaffold`. Defaults to true. */
   git?: boolean;
+  /** Options for the chosen recoverer's scaffold hook, such as `{ assets: "proxy" }` for three. */
+  recoverer?: Record<string, unknown>;
   signal?: AbortSignal;
   onProgress?: (event: ScaffoldProgress) => void;
 }
@@ -164,7 +167,11 @@ export async function scaffold(options: ScaffoldOptions): Promise<ScaffoldResult
       `Unbundle in ${root} is ${manifest.stages.unbundle.status}. Run "s2s unbundle" before "s2s scaffold".`,
     );
   const previous = manifest.stages.scaffold;
-  const sameTarget = !options.target || previous.details?.target === options.target;
+  const sameTarget =
+    (!options.target || previous.details?.target === options.target) &&
+    Object.entries(options.recoverer ?? {}).every(
+      ([k, v]) => v === undefined || previous.details?.[k] === v,
+    );
   if (previous.status === "complete" && !options.force && sameTarget) {
     progress({ kind: "skip", workspace: root, reason: "scaffold is already complete" });
     const target = String(previous.details?.target ?? "vanilla");
@@ -226,6 +233,8 @@ export async function scaffold(options: ScaffoldOptions): Promise<ScaffoldResult
             install: outcome.install,
             build: outcome.build,
             lockfile: outcome.lockfile,
+            recoverer: outcome.recoverer,
+            ...outcome.recovererDetails,
           },
         }
       : {}),
@@ -260,6 +269,8 @@ interface Outcome {
   lockfile: string | null;
   committed: boolean;
   fallbackIdentity: boolean;
+  recoverer: string;
+  recovererDetails: Record<string, string | number | boolean | null>;
 }
 
 async function readJson<T>(file: string): Promise<T | undefined> {
@@ -611,6 +622,23 @@ async function run(
   addMissingImports(pkg, graph, packagesFile, warn, new Set(aliases.map((a) => a.name)));
   await writeJsonAtomic(paths.packageJson, scaffoldPackageJson(pkg, target));
 
+  // 5b. The recoverer's own files (three: assets, shaders, layout), before install and build.
+  const framework = await readFramework(paths);
+  const recoverer = recovererByName(framework.recoverer);
+  const recovererStats: Record<string, number> = {};
+  const recovererDetails: Record<string, string | number | boolean | null> = {};
+  if (recoverer.scaffold) {
+    signal?.throwIfAborted();
+    await recoverer.scaffold({
+      paths,
+      framework,
+      options: options.recoverer ?? {},
+      warn,
+      stats: recovererStats,
+      details: recovererDetails,
+    });
+  }
+
   // 6. Agent files and the analysis record of where everything went.
   const files = graph.modules.map((m) => ({
     module: m.id,
@@ -647,6 +675,8 @@ async function run(
     moves,
     notes,
   });
+  const notesLines = recoverer.agentNotes?.(framework) ?? [];
+  if (notesLines.length > 0) facts.framework = { name: framework.recoverer, lines: notesLines };
   await writeAgentFiles(paths, facts);
   await writeFileAtomic(paths.gitignore, WORKSPACE_GITIGNORE);
 
@@ -713,8 +743,11 @@ async function run(
     lockfile,
     committed,
     fallbackIdentity,
+    recoverer: framework.recoverer,
+    recovererDetails,
     ...(buildOutput ? { buildOutput } : {}),
     stats: {
+      ...recovererStats,
       modules: code.length,
       styles: graph.modules.length - code.length,
       assets: sources.filter((s) => s.startsWith("assets/")).length,

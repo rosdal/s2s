@@ -34,7 +34,13 @@ export type FixtureName =
   | "obfuscated"
   | "browserify-legacy"
   | "dynamic"
-  | "api-app";
+  | "api-app"
+  | "three-basic"
+  | "three-compressed"
+  | "r3f-scene"
+  | "three-postfx"
+  | "three-physics"
+  | "three-skinned";
 
 /** Folder each fixture is served from; fixtures with a build step serve their build output. */
 export const FIXTURE_ROOTS: Record<FixtureName, string> = {
@@ -65,6 +71,12 @@ export const FIXTURE_ROOTS: Record<FixtureName, string> = {
   "browserify-legacy": "browserify-legacy/dist",
   dynamic: "dynamic",
   "api-app": "api-app",
+  "three-basic": "three-basic/dist",
+  "three-compressed": "three-compressed/dist",
+  "r3f-scene": "r3f-scene/dist",
+  "three-postfx": "three-postfx/dist",
+  "three-physics": "three-physics/dist",
+  "three-skinned": "three-skinned/dist",
 };
 
 export const BUILT_FIXTURES = [
@@ -88,6 +100,12 @@ export const BUILT_FIXTURES = [
   "assets",
   "obfuscated",
   "browserify-legacy",
+  "three-basic",
+  "three-compressed",
+  "r3f-scene",
+  "three-postfx",
+  "three-physics",
+  "three-skinned",
 ] as const;
 
 const TYPES: Record<string, string> = {
@@ -101,6 +119,16 @@ const TYPES: Record<string, string> = {
   ".png": "image/png",
   ".txt": "text/plain; charset=utf-8",
   ".woff2": "font/woff2",
+  ".glb": "model/gltf-binary",
+  ".gltf": "model/gltf+json",
+  ".ktx2": "image/ktx2",
+  ".hdr": "application/octet-stream",
+  ".wasm": "application/wasm",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".ogg": "audio/ogg",
+  ".jpg": "image/jpeg",
+  ".webp": "image/webp",
 };
 
 export interface FixtureServer {

@@ -1,3 +1,4 @@
+import { recoverShaders } from "../../webgl/shaders.js";
 import { RECOVERER_API_VERSION, type Recoverer } from "../api.js";
 import { detectThree } from "./detect.js";
 
@@ -18,6 +19,9 @@ export const threeRecoverer: Recoverer = {
       );
     });
     return webgl ? { webgl: true } : undefined;
+  },
+  async unbundleHints(ctx) {
+    await recoverShaders(ctx.paths, ctx.warn);
   },
   verifyHints() {
     return { webgl: true };

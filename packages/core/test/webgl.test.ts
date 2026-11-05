@@ -127,3 +127,39 @@ describe("WebGL capture", () => {
     expect(later.base).toBe("t0");
   });
 });
+
+describe("three recoverer through unbundle", () => {
+  test("three-basic: framework.json, signals and recovered shaders", async () => {
+    const dir = await unbundled("three-basic");
+    const framework = JSON.parse(
+      await readFile(path.join(dir, "analysis", "framework.json"), "utf8"),
+    );
+    expect(framework.recoverer).toBe("three");
+    expect(framework.flavour).toBe("vanilla");
+    expect(framework.version).toBe("0.187");
+    expect(framework.details.addons).toContain("GLTFLoader");
+    expect(framework.details.companions).toContain("gsap/ScrollTrigger");
+    expect(framework.unsupported).toEqual([]);
+
+    const vert = await readFile(
+      path.join(dir, "recovered", "unbundled", "shaders", "glow.vert.glsl"),
+      "utf8",
+    );
+    const frag = await readFile(
+      path.join(dir, "recovered", "unbundled", "shaders", "glow.frag.glsl"),
+      "utf8",
+    );
+    expect(vert.startsWith("#include <common>")).toBe(true);
+    expect(vert).toContain("uniform float uTime;");
+    expect(frag).toContain("gl_FragColor");
+    const record = JSON.parse(await readFile(path.join(dir, "analysis", "shaders.json"), "utf8"));
+    const module = record.files.find(
+      (f: { stage: string; name: string }) => f.stage === "vert" && f.name === "glow",
+    ).module as string;
+    const code = await readFile(path.join(dir, module), "utf8");
+    expect(code).toMatch(/import glowVertexShader from "[./]*\/?shaders\/glow\.vert\.glsl\?raw";/);
+    expect(code).not.toContain("uniform float uTime;");
+    // Built-in materials (the ground's MeshStandardMaterial) are not written out.
+    expect(record.programs.some((p: { builtin: boolean }) => p.builtin)).toBe(true);
+  });
+});

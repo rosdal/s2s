@@ -295,7 +295,9 @@ async function listFiles(dir: string): Promise<string[]> {
 /** The project path a workspace file moves to (both workspace-relative, posix). */
 function projectPath(file: string, jsx: boolean): string {
   let rel: string;
-  if (file.startsWith("recovered/unbundled/"))
+  if (file.startsWith("recovered/unbundled/shaders/") && /\.glsl$/i.test(file))
+    rel = `project/src/shaders/${file.slice("recovered/unbundled/shaders/".length)}`;
+  else if (file.startsWith("recovered/unbundled/"))
     rel = `project/src/_recovered/${file.slice("recovered/unbundled/".length)}`;
   else if (file.startsWith("recovered/sourcemap/"))
     rel = `project/src/_recovered/_sourcemap/${file.slice("recovered/sourcemap/".length)}`;
@@ -387,6 +389,9 @@ async function run(
   }
   for (const file of await listFiles(paths.assets))
     sources.push(posix(path.relative(paths.root, file)));
+  // GLSL a recoverer pulled out of string literals; the modules import them with `?raw`.
+  for (const file of await listFiles(path.join(paths.unbundled, "shaders")))
+    if (/\.glsl$/i.test(file)) sources.push(posix(path.relative(paths.root, file)));
   const texts = new Map<string, string>();
   const moves = new Map<string, string>();
   for (const file of sources) {

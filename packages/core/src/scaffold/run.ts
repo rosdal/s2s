@@ -624,9 +624,16 @@ async function run(
     removedFromHtml = built.removed;
     // The site bundled the browser `process` polyfill, as webpack 4 and browserify did on their
     // own; installed packages (`util`) now read the global, so define it before the app runs.
-    const polyfilled = [...written.values()].some((t) =>
-      /process\.title\s*=\s*["'`]browser["'`]/.test(t ?? ""),
-    );
+    // The polyfill itself may have been dropped as library code: look in the captured bundles too.
+    const marker = /process\.title\s*=\s*["'`]browser["'`]/;
+    let polyfilled = [...written.values()].some((t) => marker.test(t ?? ""));
+    for (const hash of polyfilled ? [] : new Set(bodyOf.values())) {
+      const body = await readFile(path.join(paths.bodies, hash), "utf8").catch(() => "");
+      if (marker.test(body)) {
+        polyfilled = true;
+        break;
+      }
+    }
     const html = polyfilled
       ? built.html.replace(
           /<head([^>]*)>/i,

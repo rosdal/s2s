@@ -9,7 +9,9 @@ import {
   PackageReader,
   shapeOf,
 } from "../src/scaffold/vendor-names.js";
+import { classesReadBeforeDeclared } from "../src/unbundle/adapter.js";
 import { parseCode } from "../src/unbundle/ast.js";
+import { healSpans } from "../src/unbundle/inputs.js";
 import { absorbSelfNamed, adoptRecords } from "../src/unbundle/split.js";
 import {
   decodeHdr,
@@ -387,7 +389,7 @@ describe("nameVendorBindings copies", () => {
       "export const f = RO();",
     ].join("\n");
     const bundleCode =
-      "var hidden = 2; var RO = (n) => n ? n : typeof fetch == 'undefined' ? Dv : fetch; var Bad = () => hidden; var Dv = 1;";
+      "var hidden = { n: 2 }; var RO = (n) => n ? n : typeof fetch == 'undefined' ? Dv : fetch; var Bad = () => hidden; var Dv = 1;";
     const out = await nameVendorBindings(
       code,
       bundleDeclarations(bundleCode),
@@ -474,5 +476,41 @@ describe("scene pairing", () => {
     const a = [scene("Scene", "x"), scene("Scene", "y")];
     const b = [scene("Scene", "x2"), scene("Scene", "y2")];
     expect(sameScene(a, b, 1)).toBe(a[1]);
+  });
+});
+
+describe("healSpans", () => {
+  const span = (pkg: string, start: number, end: number) =>
+    ({ package: pkg, version: null, start, end, method: "fingerprint", moduleKind: null }) as never;
+  test("a tiny foreign match between two close ranges of one package closes the gap", () => {
+    const out = healSpans([
+      span("three", 0, 1000),
+      span("gsap", 1100, 1191),
+      span("three", 1300, 5000),
+    ]) as {
+      package: string;
+      start: number;
+      end: number;
+    }[];
+    expect(out.map((s) => [s.package, s.start, s.end])).toEqual([
+      ["three", 0, 1000],
+      ["three", 1000, 1300],
+      ["three", 1300, 5000],
+    ]);
+  });
+  test("a real range of another package stays", () => {
+    const spans = [span("three", 0, 1000), span("gsap", 1100, 3000), span("three", 3100, 5000)];
+    expect(healSpans(spans)).toEqual(spans);
+  });
+});
+
+describe("classesReadBeforeDeclared", () => {
+  test("a class read above its declaration in the same body is caught; a lazy read is not", () => {
+    expect([...classesReadBeforeDeclared("((e) => { e.Buffer = u; class u {} })(x);")]).toEqual([
+      "u",
+    ]);
+    expect([...classesReadBeforeDeclared("function f() { return new u(); } class u {}")]).toEqual(
+      [],
+    );
   });
 });

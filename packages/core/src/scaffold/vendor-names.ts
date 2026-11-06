@@ -64,7 +64,10 @@ export function shapeOf(node: t.Node): Shape {
   };
   visit(node, 0);
   for (const x of statics.get(node) ?? []) tokens.add(x);
-  if (tokens.size === 0) for (const x of structureOf(node)) tokens.add(x);
+  // Only a function or class has structure enough to tell it apart (`require_x()` and
+  // `createColorManagement()` are both just a call).
+  if (tokens.size === 0 && /Function|Class|Arrow/.test(node.type))
+    for (const x of structureOf(node)) tokens.add(x);
   return tokens;
 }
 
@@ -833,10 +836,13 @@ export async function nameVendorBindings(
     const helperText = (name: string): string | null => {
       if (notCopied.has(name)) return null;
       const decl = bundle.get(name);
+      // A class without `extends` is as lazy as a function (`class Semver {…}`).
       const fn =
         decl?.type === "ArrowFunctionExpression" ||
         decl?.type === "FunctionExpression" ||
-        decl?.type === "FunctionDeclaration";
+        decl?.type === "FunctionDeclaration" ||
+        ((decl?.type === "ClassDeclaration" || decl?.type === "ClassExpression") &&
+          !decl.superClass);
       // `var _w = Object.prototype.hasOwnProperty`: a global's member, safe to read again.
       const globalMember = (n: t.Node): boolean =>
         n.type === "MemberExpression"
@@ -844,8 +850,22 @@ export async function nameVendorBindings(
           : n.type === "Identifier" && !bundle.has(n.name);
       // `UM = React.createContext(null)`: a library's own singleton nothing exports. It runs on
       // load, so it is placed after what it reads (see `eager`).
-      const call = decl?.type === "CallExpression" || decl?.type === "NewExpression";
-      if (!decl || !(fn || call || globalMember(decl)) || decl.start == null || decl.end == null)
+      // Not the bundler's own helpers (`__exportAll({...})` is a package's namespace object).
+      const call =
+        (decl?.type === "CallExpression" || decl?.type === "NewExpression") &&
+        !(decl.callee.type === "Identifier" && decl.callee.name.startsWith("__"));
+      // `var PREFIX = "tp"`: a constant, safe to have twice.
+      const literal =
+        decl?.type === "StringLiteral" ||
+        decl?.type === "NumericLiteral" ||
+        decl?.type === "BooleanLiteral" ||
+        (decl?.type === "TemplateLiteral" && decl.expressions.length === 0);
+      if (
+        !decl ||
+        !(fn || call || literal || globalMember(decl)) ||
+        decl.start == null ||
+        decl.end == null
+      )
         return null;
       const text = bundleCode.slice(decl.start, decl.end);
       if (text.length > MAX_COPIED_HELPER) return null;
@@ -888,6 +908,20 @@ export async function nameVendorBindings(
 
   const edits: TextEdit[] = [];
   const named: Omit<NamedBinding, "file">[] = [];
+  // A copy's on-load dependencies (`JM = createContext(null)` under `wP = () => useContext(JM)`)
+  // go after what they read: in the alias statement's own rewrite when that is late enough (an
+  // insert right behind it would collide with the next alias's rewrite), else after the
+  // statement that declares the last name they read.
+  const inlineEager = new Map<t.VariableDeclaration, string[]>();
+  const lateEager: { name: string; at: number }[] = [];
+  for (const { name, decl } of eagerDeps) {
+    const at = Math.max(
+      0,
+      ...(freeNames(helpers.get(name) as string) ?? []).map((n) => declaredEnd.get(n) ?? 0),
+    );
+    if (at <= (decl.end ?? 0)) inlineEager.set(decl, [...(inlineEager.get(decl) ?? []), name]);
+    else lateEager.push({ name, at });
+  }
   const stillRead = new Set<string>();
   for (const a of aliases) {
     let changed = false;
@@ -913,7 +947,7 @@ export async function nameVendorBindings(
         }
       }
       if (copy) {
-        if (bundle.get(p.id)?.type === "FunctionDeclaration") declared.push(copy);
+        if (/^(Function|Class)Declaration$/.test(bundle.get(p.id)?.type ?? "")) declared.push(copy);
         else kept.push(`${p.id} = ${copy}`);
         changed = true;
         continue;
@@ -935,25 +969,22 @@ export async function nameVendorBindings(
         text: [
           ...(before.get(a.decl) ?? []).map((n) => {
             const text = helpers.get(n) as string;
-            return bundle.get(n)?.type === "FunctionDeclaration" ? text : `const ${n} = ${text};`;
+            return /^(Function|Class)Declaration$/.test(bundle.get(n)?.type ?? "")
+              ? text
+              : `const ${n} = ${text};`;
           }),
           kept.length === 0 ? "" : `${a.decl.kind} ${kept.join(",\n  ")};`,
           ...declared,
+          ...(inlineEager.get(a.decl) ?? []).map(
+            (n) => `const ${n} = ${helpers.get(n) as string};`,
+          ),
         ]
           .filter(Boolean)
           .join("\n"),
       });
   }
-  // A copy's on-load dependencies (`JM = createContext(null)` under `wP = () => useContext(JM)`):
-  // after what they read, and past the alias statement, which is rewritten in place.
-  for (const { name, decl } of eagerDeps) {
-    const text = helpers.get(name) as string;
-    const at = Math.max(
-      (decl.end ?? 0) + 1,
-      ...(freeNames(text) ?? []).map((n) => declaredEnd.get(n) ?? 0),
-    );
-    edits.push({ start: at, end: at, text: `\nconst ${name} = ${text};\n` });
-  }
+  for (const { name, at } of lateEager)
+    edits.push({ start: at, end: at, text: `\nconst ${name} = ${helpers.get(name) as string};` });
   for (const [local, { pkg, node }] of namespaces) {
     const lines: string[] = [];
     const bySpec = new Map<string, string[]>();
@@ -1053,12 +1084,24 @@ function freeNames(text: string): string[] | null {
   try {
     const ast = parseCode(`(${text});`);
     let names: string[] = [];
+    // A copy that assigns a binding it doesn't declare (wasm-bindgen's heap counter `d`) would
+    // write the module's own, possibly `const`, binding: not copied.
+    let writes = false;
+    const written = (p: { node: t.Node; scope: { hasBinding(n: string): boolean } }) => {
+      if (p.node.type === "Identifier" && !p.scope.hasBinding(p.node.name)) writes = true;
+    };
     traverse(ast, {
       Program(path) {
         names = Object.keys(path.scope.globals);
       },
+      AssignmentExpression(path) {
+        written(path.get("left") as never);
+      },
+      UpdateExpression(path) {
+        written(path.get("argument") as never);
+      },
     });
-    return names;
+    return writes ? null : names;
   } catch {
     return null;
   }

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type * as t from "@babel/types";
-import { applyEdits, parseCode, type TextEdit } from "../unbundle/ast.js";
+import { applyEdits, parseCode, type TextEdit, traverse } from "../unbundle/ast.js";
 
 /**
  * Stage 4 drops a library's inlined code and points what the site used of it at
@@ -63,7 +63,53 @@ export function shapeOf(node: t.Node): Shape {
     }
   };
   visit(node, 0);
+  for (const x of statics.get(node) ?? []) tokens.add(x);
   return tokens;
+}
+
+/**
+ * What a function's top-level static assignments (`useGLTF.preload = (path, draco) => …`) add to
+ * its shape: the property names, and the parameter counts of the function and each static, as a
+ * hook's body alone is often too small to tell it from its siblings (`useFBX.preload`).
+ */
+const statics = new WeakMap<t.Node, Set<string>>();
+
+const arity = (n: t.Node | null | undefined): number | null =>
+  n &&
+  (n.type === "FunctionDeclaration" ||
+    n.type === "FunctionExpression" ||
+    n.type === "ArrowFunctionExpression")
+    ? n.params.length
+    : null;
+
+function collectStatics(body: t.Statement[], out: Map<string, t.Node>): void {
+  const assignments = (e: t.Expression): t.AssignmentExpression[] =>
+    e.type === "SequenceExpression"
+      ? e.expressions.flatMap(assignments)
+      : e.type === "AssignmentExpression"
+        ? [e]
+        : [];
+  for (const node of body) {
+    if (node.type !== "ExpressionStatement") continue;
+    for (const a of assignments(node.expression)) {
+      const left = a.left;
+      if (
+        left.type !== "MemberExpression" ||
+        left.computed ||
+        left.object.type !== "Identifier" ||
+        left.property.type !== "Identifier"
+      )
+        continue;
+      const decl = out.get(left.object.name);
+      const own = arity(decl);
+      if (!decl || own === null) continue;
+      const set = statics.get(decl) ?? new Set<string>([`n:${own}`]);
+      set.add(`p:${left.property.name}`);
+      const theirs = arity(a.right);
+      if (theirs !== null) set.add(`n:${left.property.name}:${theirs}`);
+      statics.set(decl, set);
+    }
+  }
 }
 
 const jaccard = (a: Shape, b: Shape) => {
@@ -87,6 +133,21 @@ function declarations(ast: t.File): Map<string, t.Node> {
       for (const d of decl.declarations)
         if (d.id.type === "Identifier" && d.init) out.set(d.id.name, d.init);
   }
+  // `var kK; … kK = EK.createRoot`: a binding declared bare stands for what it is first assigned.
+  for (const node of ast.program.body) {
+    if (node.type !== "ExpressionStatement") continue;
+    const all = (e: t.Expression): t.Expression[] =>
+      e.type === "SequenceExpression" ? e.expressions.flatMap(all) : [e];
+    for (const e of all(node.expression))
+      if (
+        e.type === "AssignmentExpression" &&
+        e.operator === "=" &&
+        e.left.type === "Identifier" &&
+        !out.has(e.left.name)
+      )
+        out.set(e.left.name, e.right);
+  }
+  collectStatics(ast.program.body, out);
   return out;
 }
 
@@ -99,7 +160,36 @@ export function bundleDeclarations(code: string): Map<string, t.Node> {
   }
 }
 
+/** A bundle's imports of other chunks (`import { k as j } from "./vendor.js"`) and its exports. */
+export function bundleLinks(code: string): {
+  imports: { local: string; imported: string; source: string }[];
+  exports: Map<string, string>;
+} {
+  const imports: { local: string; imported: string; source: string }[] = [];
+  const exports = new Map<string, string>();
+  try {
+    for (const node of parseCode(code).program.body) {
+      if (node.type === "ImportDeclaration" && node.source.value.startsWith("."))
+        for (const s of node.specifiers)
+          if (s.type === "ImportSpecifier")
+            imports.push({
+              local: s.local.name,
+              imported: nameOf(s.imported),
+              source: node.source.value,
+            });
+      if (node.type === "ExportNamedDeclaration" && !node.source)
+        for (const s of node.specifiers)
+          if (s.type === "ExportSpecifier") exports.set(nameOf(s.exported), nameOf(s.local));
+    }
+  } catch {
+    // An unparsable bundle links nothing.
+  }
+  return { imports, exports };
+}
+
 export const MIN_SIMILARITY = 0.55;
+/** A binding named from a library other than the one Stage 4 filed it under needs a closer match. */
+export const CROSS_PACKAGE_SIMILARITY = 0.8;
 const MIN_TOKENS = 3;
 
 export interface Candidate {
@@ -269,11 +359,77 @@ export class PackageReader {
             if (shape) out.set("default", shape);
           }
         }
+        if (out.size === 0) await this.#commonJs(file, mod.ast.program.body, out, depth);
         return out;
       })();
       this.#exports.set(file, known);
     }
     return known;
+  }
+
+  /**
+   * A CommonJS module's exports: `module.exports = …` is the default (a `require` of a sibling
+   * passes through, taking the production branch of a `NODE_ENV` check), `exports.x = …` a name.
+   */
+  async #commonJs(
+    file: string,
+    body: t.Statement[],
+    out: Map<string, Shape>,
+    depth: number,
+  ): Promise<void> {
+    for (const node of body) {
+      if (node.type === "IfStatement") {
+        const test = node.test;
+        if (
+          test.type !== "BinaryExpression" ||
+          ![test.left, test.right].some(
+            (x) => x.type === "StringLiteral" && x.value === "production",
+          )
+        )
+          continue;
+        const branch =
+          test.operator === "===" || test.operator === "==" ? node.consequent : node.alternate;
+        if (branch)
+          await this.#commonJs(
+            file,
+            branch.type === "BlockStatement" ? branch.body : [branch],
+            out,
+            depth,
+          );
+        continue;
+      }
+      if (node.type !== "ExpressionStatement") continue;
+      const e = node.expression;
+      if (e.type !== "AssignmentExpression" || e.operator !== "=") continue;
+      const left = e.left;
+      if (left.type !== "MemberExpression" || left.computed) continue;
+      const target =
+        left.object.type === "Identifier" &&
+        left.object.name === "module" &&
+        left.property.type === "Identifier" &&
+        left.property.name === "exports"
+          ? "default"
+          : left.object.type === "Identifier" &&
+              left.object.name === "exports" &&
+              left.property.type === "Identifier"
+            ? left.property.name
+            : null;
+      if (!target) continue;
+      const right = e.right;
+      if (
+        target === "default" &&
+        right.type === "CallExpression" &&
+        right.callee.type === "Identifier" &&
+        right.callee.name === "require" &&
+        right.arguments[0]?.type === "StringLiteral"
+      ) {
+        const next = this.#resolve(file, right.arguments[0].value);
+        if (next) for (const [k, v] of await this.exportsOf(next, depth + 1)) out.set(k, v);
+        continue;
+      }
+      const shape = await this.#deref(file, right, depth + 1);
+      if (shape) out.set(target, shape);
+    }
   }
 
   /** The browser ESM entry. */
@@ -428,12 +584,17 @@ export async function nameVendorBindings(
   code: string,
   bundle: Map<string, t.Node>,
   readerOf: (pkg: string) => PackageReader,
-): Promise<{ code: string; named: Omit<NamedBinding, "file">[] }> {
+  /** The project's other dependencies, tried by their entry when no imported library fits. */
+  projectPkgs: string[] = [],
+  /** The bundle's text, to copy small helpers no package exports, and names not to copy. */
+  bundleCode = "",
+  notCopied: Set<string> = new Set(),
+): Promise<{ code: string; named: Omit<NamedBinding, "file">[]; copied: string[] }> {
   let ast: t.File;
   try {
     ast = parseCode(code);
   } catch {
-    return { code, named: [] };
+    return { code, named: [], copied: [] };
   }
   const namespaces = new Map<string, { pkg: string; node: t.ImportDeclaration }>();
   for (const node of ast.program.body) {
@@ -446,7 +607,23 @@ export async function nameVendorBindings(
     )
       namespaces.set(spec.local.name, { pkg: node.source.value, node });
   }
-  if (namespaces.size === 0) return { code, named: [] };
+  if (namespaces.size === 0) return { code, named: [], copied: [] };
+  // `const ns = { ...ns$0, ...ns$1 }`: one library read through its entry and a subpath.
+  const merged = new Map<string, { pkgs: string[]; node: t.VariableDeclaration }>();
+  for (const node of ast.program.body) {
+    if (node.type !== "VariableDeclaration" || node.declarations.length !== 1) continue;
+    const d = node.declarations[0] as t.VariableDeclarator;
+    if (d.id.type !== "Identifier" || d.init?.type !== "ObjectExpression") continue;
+    const parts = d.init.properties.map((p) =>
+      p.type === "SpreadElement" && p.argument.type === "Identifier"
+        ? namespaces.get(p.argument.name)?.pkg
+        : undefined,
+    );
+    if (parts.length > 0 && parts.every(Boolean))
+      merged.set(d.id.name, { pkgs: parts as string[], node });
+  }
+  const pkgsOf = (ns: string): string[] =>
+    merged.get(ns)?.pkgs ?? [(namespaces.get(ns) as { pkg: string }).pkg];
   const aliases: {
     decl: t.VariableDeclaration;
     parts: { id: string; ns: string | null; text: string }[];
@@ -454,7 +631,10 @@ export async function nameVendorBindings(
   for (const node of ast.program.body) {
     if (node.type !== "VariableDeclaration") continue;
     const parts = node.declarations.map((d) => {
-      const ns = d.init?.type === "Identifier" && namespaces.has(d.init.name) ? d.init.name : null;
+      const ns =
+        d.init?.type === "Identifier" && (namespaces.has(d.init.name) || merged.has(d.init.name))
+          ? d.init.name
+          : null;
       return {
         id: d.id.type === "Identifier" ? d.id.name : "",
         ns,
@@ -472,17 +652,101 @@ export async function nameVendorBindings(
       return deref(node.right, depth + 1);
     return node;
   };
-  const tryName = async (local: string, pkg: string) => {
+  const pkgs = [...new Set([...namespaces.values()].map((n) => n.pkg))];
+  const tryName = async (local: string, own: string[]) => {
     const decl = deref(bundle.get(local));
     if (!decl) return;
-    const hit = await resolveBinding(readerOf(pkg), shapeOf(decl));
-    if (hit) resolved.set(local, hit);
+    // `EK.createRoot`: a library object's member is that export, by name.
+    if (decl.type === "MemberExpression" && !decl.computed && decl.property.type === "Identifier") {
+      const name = decl.property.name;
+      for (const pkg of own) {
+        const root = pkg.startsWith("@") ? pkg.split("/").slice(0, 2).join("/") : pkg.split("/")[0];
+        const reader = readerOf(root as string);
+        // The entry first, then the library's other modules (`jsx` is `react/jsx-runtime`'s).
+        const entry = pkg === root ? await reader.entry() : undefined;
+        const others = await reader.subpaths([name]);
+        const files: [string, string][] = [
+          ...(entry ? [[pkg, entry] as [string, string]] : []),
+          ...others.filter(([spec]) => spec === pkg),
+          ...(pkg === root ? others : []),
+        ];
+        for (const [specifier, file] of files)
+          if ((await reader.exportsOf(file)).has(name)) {
+            resolved.set(local, { specifier, name, score: 1 });
+            return;
+          }
+      }
+    }
+    const shape = shapeOf(decl);
+    for (const pkg of own) {
+      const hit = await resolveBinding(readerOf(pkg), shape);
+      if (hit) {
+        resolved.set(local, hit);
+        return;
+      }
+    }
+    // Stage 4 can file a binding under the wrong library when two were inlined side by side
+    // (three's `LoadingManager` under react-dom): try the module's other libraries, on a closer
+    // match.
+    let best: Resolution | null = null;
+    for (const other of pkgs) {
+      if (own.includes(other)) continue;
+      const alt = await resolveBinding(readerOf(other), shape);
+      if (alt && alt.score >= CROSS_PACKAGE_SIMILARITY && (!best || alt.score > best.score))
+        best = alt;
+    }
+    if (!best)
+      for (const other of projectPkgs) {
+        if (own.includes(other) || pkgs.includes(other)) continue;
+        const reader = readerOf(other);
+        const entry = await reader.entry();
+        if (!entry) continue;
+        const exports = [...(await reader.exportsOf(entry))].map(([name, s]) => ({
+          name,
+          shape: s,
+        }));
+        const hit = bestExport(shape, exports);
+        if (hit && hit.score >= CROSS_PACKAGE_SIMILARITY && (!best || hit.score > best.score))
+          best = { specifier: other, ...hit };
+      }
+    if (best) resolved.set(local, best);
   };
-  for (const [local, { pkg }] of namespaces) await tryName(local, pkg);
+  for (const [local, { pkg }] of namespaces) await tryName(local, [pkg]);
   for (const a of aliases)
-    for (const p of a.parts)
-      if (p.ns && p.id) await tryName(p.id, (namespaces.get(p.ns) as { pkg: string }).pkg);
-  if (resolved.size === 0) return { code, named: [] };
+    for (const p of a.parts) if (p.ns && p.id) await tryName(p.id, pkgsOf(p.ns));
+  // A library's internal helper (supabase's `resolveFetch`) is no export: copy its definition from
+  // the bundle when it is a small function whose free names are globals or this module's own.
+  const copies = new Map<string, string>();
+  if (bundleCode) {
+    const own = new Set<string>();
+    for (const node of ast.program.body) {
+      if (node.type === "ImportDeclaration") {
+        for (const sp of node.specifiers) own.add(sp.local.name);
+      } else if (node.type === "VariableDeclaration") {
+        for (const d of node.declarations) if (d.id.type === "Identifier") own.add(d.id.name);
+      } else if (
+        (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration") &&
+        node.id
+      ) {
+        own.add(node.id.name);
+      }
+    }
+    for (const a of aliases)
+      for (const p of a.parts) {
+        if (!p.ns || !p.id || resolved.has(p.id) || notCopied.has(p.id)) continue;
+        const decl = bundle.get(p.id);
+        const fn =
+          decl?.type === "ArrowFunctionExpression" ||
+          decl?.type === "FunctionExpression" ||
+          decl?.type === "FunctionDeclaration";
+        if (!decl || !fn || decl.start == null || decl.end == null) continue;
+        const text = bundleCode.slice(decl.start, decl.end);
+        if (text.length > MAX_COPIED_HELPER) continue;
+        const free = freeNames(text);
+        if (free && free.every((n) => own.has(n) || !bundle.has(n))) copies.set(p.id, text);
+      }
+  }
+  if (resolved.size === 0 && copies.size === 0) return { code, named: [], copied: [] };
 
   const edits: TextEdit[] = [];
   const named: Omit<NamedBinding, "file">[] = [];
@@ -490,8 +754,17 @@ export async function nameVendorBindings(
   for (const a of aliases) {
     let changed = false;
     const kept: string[] = [];
+    // A copied `function en() { return en = … }` stays a declaration: it may reassign itself.
+    const declared: string[] = [];
     for (const p of a.parts) {
       if (p.ns && p.id && resolved.has(p.id)) {
+        changed = true;
+        continue;
+      }
+      const copy = copies.get(p.id);
+      if (copy) {
+        if (bundle.get(p.id)?.type === "FunctionDeclaration") declared.push(copy);
+        else kept.push(`${p.id} = ${copy}`);
         changed = true;
         continue;
       }
@@ -509,7 +782,9 @@ export async function nameVendorBindings(
       edits.push({
         start: a.decl.start ?? 0,
         end: a.decl.end ?? 0,
-        text: kept.length === 0 ? "" : `${a.decl.kind} ${kept.join(",\n  ")};`,
+        text: [kept.length === 0 ? "" : `${a.decl.kind} ${kept.join(",\n  ")};`, ...declared]
+          .filter(Boolean)
+          .join("\n"),
       });
   }
   for (const [local, { pkg, node }] of namespaces) {
@@ -540,7 +815,50 @@ export async function nameVendorBindings(
       lines.push(`import { ${names.join(", ")} } from ${JSON.stringify(spec)};`);
     edits.push({ start: node.start ?? 0, end: node.end ?? 0, text: lines.join("\n") });
   }
-  return { code: applyEdits(code, edits), named };
+  for (const [local, { pkgs: own, node }] of merged) {
+    const bySpec = new Map<string, string[]>();
+    for (const a of aliases)
+      for (const p of a.parts) {
+        const r = p.ns === local ? resolved.get(p.id) : undefined;
+        if (!r) continue;
+        named.push({
+          package: own[0] as string,
+          local: p.id,
+          specifier: r.specifier,
+          export: r.name,
+          score: r.score,
+        });
+        bySpec.set(r.specifier, [
+          ...(bySpec.get(r.specifier) ?? []),
+          r.name === "default" ? `default as ${p.id}` : `${r.name} as ${p.id}`,
+        ]);
+      }
+    if (bySpec.size === 0) continue;
+    const lines = [code.slice(node.start ?? 0, node.end ?? 0)];
+    for (const [spec, names] of bySpec)
+      lines.push(`import { ${names.join(", ")} } from ${JSON.stringify(spec)};`);
+    edits.push({ start: node.start ?? 0, end: node.end ?? 0, text: lines.join("\n") });
+  }
+  return { code: applyEdits(code, edits), named, copied: [...copies.keys()] };
+}
+
+/** Longest helper copied from the bundle, in characters. */
+const MAX_COPIED_HELPER = 2000;
+
+/** The names a function's text reads without declaring, or null when it does not parse alone. */
+function freeNames(text: string): string[] | null {
+  try {
+    const ast = parseCode(`(${text});`);
+    let names: string[] = [];
+    traverse(ast, {
+      Program(path) {
+        names = Object.keys(path.scope.globals);
+      },
+    });
+    return names;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -552,6 +870,8 @@ export async function resolveVendorNames(
   files: { file: string; bundle: string }[],
   /** Library classes Stage 4 found inlined into site statements (`analysis/vendor-inline.json`). */
   inlined: { name: string; text: string }[] = [],
+  /** The bundle a chunk import of `bundle` (`./vendor.c4.js`) loads, when it was captured. */
+  chunkOf: (bundle: string, spec: string) => string | undefined = () => undefined,
 ): Promise<NamedBinding[]> {
   const extra = new Map<string, t.Node>();
   for (const i of inlined) {
@@ -563,6 +883,22 @@ export async function resolveVendorNames(
     }
   }
   const bundles = new Map<string, Map<string, t.Node>>();
+  const texts = new Map<string, string>();
+  const own = new Map<string, Map<string, t.Node>>();
+  const ownDecls = async (bundle: string) => {
+    let d = own.get(bundle);
+    if (!d) {
+      const text = await readFile(bundle, "utf8").catch(() => "");
+      texts.set(bundle, text);
+      d = bundleDeclarations(text);
+      own.set(bundle, d);
+    }
+    return d;
+  };
+  // Names a bundle imports from another chunk, which declares them: not copied, as the text
+  // lives in that chunk.
+  const borrowed = new Map<string, Set<string>>();
+  const exportsOf = new Map<string, Map<string, string>>();
   const readers = new Map<string, PackageReader>();
   const readerOf = (pkg: string) => {
     let r = readers.get(pkg);
@@ -572,20 +908,62 @@ export async function resolveVendorNames(
     }
     return r;
   };
+  const manifest = await readFile(path.join(projectDir, "package.json"), "utf8")
+    .then((x) => JSON.parse(x) as { dependencies?: Record<string, string> })
+    .catch(() => ({}) as { dependencies?: Record<string, string> });
+  const projectPkgs = Object.keys(manifest.dependencies ?? {});
   const out: NamedBinding[] = [];
   for (const { file, bundle } of files) {
     const code = await readFile(file, "utf8").catch(() => undefined);
     if (code === undefined || !/import \* as [\w$]+ from "[^.]/.test(code)) continue;
     let decls = bundles.get(bundle);
     if (!decls) {
-      decls = bundleDeclarations(await readFile(bundle, "utf8").catch(() => ""));
-      for (const [k, v] of extra) decls.set(k, v);
+      decls = new Map(await ownDecls(bundle));
+      const links = bundleLinks(texts.get(bundle) ?? "");
+      const names = new Set<string>();
+      for (const i of links.imports) {
+        const other = chunkOf(bundle, i.source);
+        if (!other || decls.has(i.local)) continue;
+        const theirs = await ownDecls(other);
+        let exported = exportsOf.get(other);
+        if (!exported) {
+          exported = bundleLinks(texts.get(other) ?? "").exports;
+          exportsOf.set(other, exported);
+        }
+        const local = exported.get(i.imported);
+        const decl = local ? theirs.get(local) : undefined;
+        if (decl) {
+          decls.set(i.local, decl);
+          names.add(i.local);
+        }
+      }
+      borrowed.set(bundle, names);
+      // An inlined fragment stands in for a declaration Stage 4 cut out; one another chunk still
+      // declares in full (with its statics, `useGLTF.preload = …`) says more.
+      for (const [k, v] of extra) if (!names.has(k)) decls.set(k, v);
       bundles.set(bundle, decls);
     }
-    const result = await nameVendorBindings(code, decls, readerOf);
-    if (result.named.length === 0) continue;
+    // Inlined fragments carry offsets into their own text, not the bundle's: never copied.
+    const result = await nameVendorBindings(
+      code,
+      decls,
+      readerOf,
+      projectPkgs,
+      texts.get(bundle) ?? "",
+      new Set([...extra.keys(), ...(borrowed.get(bundle) ?? [])]),
+    );
+    if (result.named.length === 0 && result.copied.length === 0) continue;
     await writeFile(file, result.code);
     for (const n of result.named) out.push({ file, ...n });
+    for (const local of result.copied)
+      out.push({
+        file,
+        package: "",
+        local,
+        specifier: "",
+        export: "(copied from the bundle)",
+        score: 0,
+      });
   }
   return out;
 }

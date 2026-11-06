@@ -1,9 +1,16 @@
 import { describe, expect, test } from "vitest";
 import { requestTags } from "../src/capture/request-log.js";
 import { revisionIn } from "../src/recoverers/three/detect.js";
-import { summaryText, threeOptions } from "../src/recoverers/three/scaffold.js";
-import { bestExport, shapeOf } from "../src/scaffold/vendor-names.js";
+import { pinFiber, summaryText, threeOptions } from "../src/recoverers/three/scaffold.js";
+import {
+  bestExport,
+  bundleDeclarations,
+  nameVendorBindings,
+  PackageReader,
+  shapeOf,
+} from "../src/scaffold/vendor-names.js";
 import { parseCode } from "../src/unbundle/ast.js";
+import { absorbSelfNamed, adoptRecords } from "../src/unbundle/split.js";
 import {
   decodeHdr,
   encodeExr,
@@ -273,5 +280,154 @@ describe("detection and naming", () => {
     expect(summaryText("0.160", 1, "clone", 1, 1)).toBe(
       "three r160 · 1 model → clones · 1 custom shader · 1 keyframe",
     );
+  });
+});
+
+describe("pinFiber", () => {
+  test("pins the fiber major the project's React supports, with its reconciler", () => {
+    const react18 = { dependencies: { react: "18.3.1" } };
+    expect(pinFiber(react18, "8.18.0")).toBe("@react-three/fiber@8.18.0, react-reconciler@0.27.0");
+    expect(react18.dependencies).toMatchObject({
+      "@react-three/fiber": "8.18.0",
+      "react-reconciler": "0.27.0",
+    });
+    // A fingerprint of the other major falls back to the range.
+    expect(pinFiber({ dependencies: { react: "^19.1.0" } }, "8.18.0")).toBe(
+      "@react-three/fiber@^9, react-reconciler@0.31.0",
+    );
+  });
+  test("adds only the reconciler next to an existing fiber, and leaves no-React projects alone", () => {
+    const pkg = { dependencies: { react: "18.3.1", "@react-three/fiber": "8.15.0" } };
+    expect(pinFiber(pkg, "8.18.0")).toBe("react-reconciler@0.27.0");
+    expect(pkg.dependencies["@react-three/fiber"]).toBe("8.15.0");
+    expect(pinFiber(pkg, "8.18.0")).toBeNull();
+    expect(pinFiber({ dependencies: {} }, "8.18.0")).toBeNull();
+  });
+});
+
+describe("nameVendorBindings", () => {
+  test("names aliases of a merged namespace, from another library when Stage 4 misfiled them", async () => {
+    const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = await mkdtemp(join(tmpdir(), "s2s-names-"));
+    const lib = async (name: string, code: string) => {
+      await mkdir(join(dir, "node_modules", name), { recursive: true });
+      await writeFile(
+        join(dir, "node_modules", name, "package.json"),
+        JSON.stringify({ name, type: "module", main: "index.js" }),
+      );
+      await writeFile(join(dir, "node_modules", name, "index.js"), code);
+    };
+    const manager =
+      "{ constructor() { this.onStart = 1; this.onLoad = 2; this.itemStart = 3; } resolveURL() {} }";
+    await lib("liba", `export class LoadingManager ${manager}\nexport class Other { go() {} }`);
+    await lib("libb", "export function render() {}");
+    const code = [
+      'import * as __b$0 from "libb";',
+      'import * as __b$1 from "libb";',
+      "const __b = { ...__b$0, ...__b$1 };",
+      'import * as __a from "liba";',
+      "const X = __b;",
+      "export const m = new X();",
+    ].join("\n");
+    const bundle = bundleDeclarations(`class X ${manager}`);
+    const out = await nameVendorBindings(code, bundle, (pkg) => new PackageReader(dir, pkg));
+    expect(out.named).toMatchObject([{ local: "X", specifier: "liba", export: "LoadingManager" }]);
+    expect(out.code).toContain('import { LoadingManager as X } from "liba";');
+    expect(out.code).not.toContain("const X = __b");
+  });
+});
+
+describe("adoptRecords", () => {
+  const unit = (index: number, code: string, extra: Record<string, unknown> = {}) =>
+    ({
+      index,
+      node: parseCode(code).program.body[0],
+      exported: [],
+      writes: new Set<number>(),
+      mutates: new Set<number>(),
+      dropped: null,
+      declares: [],
+      ...extra,
+    }) as never;
+  const react = { package: "react", version: null };
+  test("CommonJS records only a dropped library fills point at that library", () => {
+    const units = [
+      unit(0, "var H = { exports: {} };"),
+      unit(1, "var xt = {};"),
+      unit(2, "xt.version = '18';", { mutates: new Set([1]), dropped: react }),
+      unit(3, "H.exports = xt;", { mutates: new Set([0]), dropped: react }),
+      // Kept code fills this one: it stays the site's own.
+      unit(4, "var own = {};"),
+      unit(5, "own.a = 1;", { mutates: new Set([4]) }),
+    ];
+    expect([...adoptRecords(units)]).toEqual([[0, "react"]]);
+    expect((units as { dropped: unknown }[]).map((u) => u.dropped)).toEqual([
+      null,
+      react,
+      react,
+      react,
+      null,
+      null,
+    ]);
+  });
+});
+
+describe("nameVendorBindings copies", () => {
+  test("a small library helper no package exports, when its free names are globals or the module's", async () => {
+    const reader = () => new PackageReader("/nonexistent", "x");
+    const code = [
+      'import * as __s from "supa";',
+      "var Dv = 1;",
+      "const RO = __s;",
+      "const Bad = __s;",
+      "export const f = RO();",
+    ].join("\n");
+    const bundleCode =
+      "var hidden = 2; var RO = (n) => n ? n : typeof fetch == 'undefined' ? Dv : fetch; var Bad = () => hidden; var Dv = 1;";
+    const out = await nameVendorBindings(
+      code,
+      bundleDeclarations(bundleCode),
+      reader,
+      [],
+      bundleCode,
+    );
+    expect(out.copied).toEqual(["RO"]);
+    expect(out.code).toContain(
+      "const RO = (n) => n ? n : typeof fetch == 'undefined' ? Dv : fetch;",
+    );
+    // `hidden` is a bundle binding this module lacks: copying would break, so it stays.
+    expect(out.code).toContain("const Bad = __s;");
+  });
+});
+
+describe("absorbSelfNamed", () => {
+  test("a statement naming the one library it touches is that library's code", () => {
+    const fiber = { package: "@react-three/fiber", version: null };
+    const gsap = { package: "gsap", version: null };
+    const units = [
+      { index: 0, node: parseCode("var wC = make();").program.body[0], dropped: fiber },
+      {
+        index: 1,
+        node: parseCode('wC.inject({ rendererPackageName: "@react-three/fiber" });').program
+          .body[0],
+        uses: new Map([["wC", 0]]),
+      },
+      { index: 2, node: parseCode("var g = 1;").program.body[0], dropped: gsap },
+      // Site code calls its library without naming the package: it stays.
+      {
+        index: 3,
+        node: parseCode("g.registerPlugin(x);").program.body[0],
+        uses: new Map([["g", 2]]),
+      },
+    ].map((u) => ({ exported: [], dropped: null, uses: new Map(), ...u })) as never[];
+    absorbSelfNamed(units);
+    expect((units as { dropped: unknown }[]).map((u) => u.dropped)).toEqual([
+      fiber,
+      fiber,
+      gsap,
+      null,
+    ]);
   });
 });

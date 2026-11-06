@@ -3,7 +3,7 @@
   "patterns": [
     {
       "id": "hooks-error",
-      "regex": "R3F: Hooks can only be used within the Canvas component",
+      "regex": "R3F:? [Hh]ooks can only be used within the Canvas component",
       "anchors": ["__r3f"],
       "window": 200000,
       "maxMatches": 1

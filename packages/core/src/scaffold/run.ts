@@ -743,14 +743,21 @@ async function run(
     const inline = (await readJson<{ inlined: { name: string; text: string }[] }>(
       path.join(paths.analysis, "vendor-inline.json"),
     )) ?? { inlined: [] };
-    const named = await resolveVendorNames(paths.project, unique, inline.inlined);
+    const urlOf = new Map([...bodyOf].map(([url, hash]) => [hash, url]));
+    const chunkOf = (bundle: string, spec: string) => {
+      const url = urlOf.get(path.basename(bundle));
+      if (!url) return undefined;
+      const hash = bodyOf.get(new URL(spec, url).href);
+      return hash ? path.join(paths.bodies, hash) : undefined;
+    };
+    const named = await resolveVendorNames(paths.project, unique, inline.inlined, chunkOf);
     namedBindings = named.length;
     await writeJsonAtomic(path.join(paths.analysis, "vendor-names.json"), {
       named: named.map((n) => ({ ...n, file: posix(path.relative(paths.root, n.file)) })),
     });
     if (named.length > 0)
       warn(
-        `Named ${named.length} binding(s) of inlined libraries after install (${[...new Set(named.map((n) => n.package))].join(", ")}); see analysis/vendor-names.json.`,
+        `Named ${named.filter((n) => n.package).length} binding(s) of inlined libraries after install (${[...new Set(named.flatMap((n) => (n.package ? [n.package] : [])))].join(", ")})${named.some((n) => !n.package) ? `, and copied ${named.filter((n) => !n.package).length} internal helper(s) from the bundle` : ""}; see analysis/vendor-names.json.`,
       );
   }
   if (options.build !== false && install !== "failed") {

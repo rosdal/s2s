@@ -157,6 +157,37 @@ delete (R3F_LAYOUT as Record<string, string | undefined>).objects;
  * The three recoverer's scaffold step, after the generic files and before install and build:
  * assets for the chosen mode, ASSETS.md, decoders, the layout folders and the local-only notices.
  */
+interface PackageJsonLike {
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+}
+
+/**
+ * Add `@react-three/fiber` when the project lacks it, at the major its React supports (8 for
+ * React 18 and older, 9 for React 19): the version fingerprints saw when it fits, else that
+ * major's range. Fiber's reconciler is often inlined beside it, and naming that code needs the
+ * package at the top level, so `react-reconciler` comes along at the line fiber uses. Returns
+ * what was added, or null when nothing changed.
+ */
+export function pinFiber(pkg: PackageJsonLike, seen: string | null): string | null {
+  const deps = pkg.dependencies ?? {};
+  const react = /(\d+)/.exec(deps.react ?? "")?.[1];
+  if (!react || pkg.devDependencies?.["@react-three/fiber"]) return null;
+  const major = Number(react) >= 19 ? 9 : 8;
+  const fiber =
+    deps["@react-three/fiber"] ??
+    (seen && /^\d+/.exec(seen)?.[0] === String(major) ? seen : `^${major}`);
+  const fiberMajor = Number(/(\d+)/.exec(fiber)?.[1] ?? major);
+  const reconciler = deps["react-reconciler"] ?? (fiberMajor >= 9 ? "0.31.0" : "0.27.0");
+  const added = [
+    deps["@react-three/fiber"] ? null : `@react-three/fiber@${fiber}`,
+    deps["react-reconciler"] ? null : `react-reconciler@${reconciler}`,
+  ].filter(Boolean);
+  if (added.length === 0) return null;
+  pkg.dependencies = { ...deps, "@react-three/fiber": fiber, "react-reconciler": reconciler };
+  return added.join(", ");
+}
+
 export async function threeScaffold(ctx: ScaffoldHookContext): Promise<void> {
   const { paths, framework } = ctx;
   const opts = threeOptions(ctx.options);
@@ -173,6 +204,23 @@ export async function threeScaffold(ctx: ScaffoldHookContext): Promise<void> {
     cloneTexture: opts.cloneTexture,
     warn: ctx.warn,
   });
+
+  // 1b. R3F whose version stayed in review: drei and friends still peer on it, and a package
+  // manager would install the newest one, built for a React the project doesn't have.
+  if (r3f) {
+    const pkg = JSON.parse(await readFile(paths.packageJson, "utf8")) as PackageJsonLike;
+    const packagesFile = JSON.parse(
+      await readFile(path.join(paths.analysis, "packages.json"), "utf8").catch(() => "{}"),
+    ) as { packages?: { name: string; version: string | null }[] };
+    const seen = packagesFile.packages?.find((p) => p.name === "@react-three/fiber")?.version;
+    const pinned = pinFiber(pkg, seen ?? null);
+    if (pinned) {
+      await writeJsonAtomic(paths.packageJson, pkg);
+      ctx.warn(
+        `Pinned ${pinned} to match react ${pkg.dependencies?.react}; a package manager would install the newest.`,
+      );
+    }
+  }
 
   // 2. Decoders from the three package, at the paths the site's loaders use.
   const records = await readRequestLog(paths.requests).catch(() => []);

@@ -126,6 +126,89 @@ export function keepWritten(units: Unit[]): void {
   }
 }
 
+/**
+ * `var m = { exports: {} }` and `var e = {}` that only one dropped library fills (`e.version = …`,
+ * `m.exports = e`) are that library's CommonJS records: kept, they stay empty. An empty object
+ * becomes the library's import; a module record keeps its shape and holds the library as its
+ * exports. Returns the units whose record now reads the library, with the package.
+ */
+export function adoptRecords(units: Unit[]): Map<number, string> {
+  const fillers = new Map<number, Unit[]>();
+  for (const u of units)
+    for (const target of [...u.writes, ...u.mutates])
+      fillers.set(target, [...(fillers.get(target) ?? []), u]);
+  const records = new Map<number, string>();
+  for (const unit of units) {
+    if (unit.dropped) continue;
+    const kind = recordKind(unit.node);
+    const by = fillers.get(unit.index) ?? [];
+    const pkg = by[0]?.dropped?.package;
+    if (!kind || !pkg || !by.every((u) => u.dropped?.package === pkg)) continue;
+    // Another chunk reading an exported object imports it from this one; a module record keeps
+    // its export and only changes what it holds.
+    if (kind === "object" && unit.exported.length > 0) continue;
+    if (kind === "object")
+      unit.dropped = { package: pkg, version: by[0]?.dropped?.version ?? null };
+    else records.set(unit.index, pkg);
+  }
+  return records;
+}
+
+function recordKind(node: t.Statement): "object" | "module" | null {
+  if (node.type !== "VariableDeclaration" || node.declarations.length !== 1) return null;
+  const init = node.declarations[0]?.init;
+  if (init?.type !== "ObjectExpression") return null;
+  if (init.properties.length === 0) return "object";
+  const [p] = init.properties;
+  if (
+    init.properties.length === 1 &&
+    p?.type === "ObjectProperty" &&
+    !p.computed &&
+    ((p.key.type === "Identifier" && p.key.name === "exports") ||
+      (p.key.type === "StringLiteral" && p.key.value === "exports")) &&
+    p.value.type === "ObjectExpression" &&
+    p.value.properties.length === 0
+  )
+    return "module";
+  return null;
+}
+
+/**
+ * A kept statement that only touches one dropped library's bindings and spells that library's
+ * name (`reconciler.injectIntoDevTools({ rendererPackageName: "@react-three/fiber" })`) is the
+ * library's own code: site code calls a library without naming its package.
+ */
+export function absorbSelfNamed(units: Unit[]): void {
+  for (const unit of units) {
+    if (unit.dropped || unit.exported.length > 0 || unit.node.type !== "ExpressionStatement")
+      continue;
+    const owners = [...unit.uses.values()].map((at) => units[at]?.dropped?.package);
+    const pkg = owners[0];
+    if (!pkg || !owners.every((p) => p === pkg)) continue;
+    if (namesString(unit.node, pkg)) unit.dropped = { package: pkg, version: null };
+  }
+}
+
+function namesString(node: t.Node, value: string): boolean {
+  let found = false;
+  const visit = (n: unknown, depth: number): void => {
+    if (found || !n || typeof n !== "object" || depth > 40) return;
+    if (Array.isArray(n)) {
+      for (const x of n) visit(x, depth + 1);
+      return;
+    }
+    const o = n as { type?: string; value?: unknown };
+    if (o.type === "StringLiteral" && o.value === value) {
+      found = true;
+      return;
+    }
+    for (const [k, v] of Object.entries(o))
+      if (k !== "loc" && k !== "leadingComments" && k !== "trailingComments") visit(v, depth + 1);
+  };
+  visit(node, 0);
+  return found;
+}
+
 /** Exported functions this small are the bundler's runtime (`__commonJSMin`, `__toESM`). */
 const RUNTIME_HELPER_BYTES = 700;
 
@@ -501,6 +584,21 @@ export function splitScope(
     absorbWedged(units);
     keepWritten(units);
     keepRuntimeHelpers(units, code);
+    absorbSelfNamed(units);
+    for (const [at, pkg] of adoptRecords(units)) {
+      const unit = units[at] as Unit;
+      const init = (unit.node as t.VariableDeclaration).declarations[0]?.init as t.Node;
+      const ns = vendorNamespace(pkg);
+      unit.edits.push({ start: start(init), end: end(init), text: `{ exports: ${ns} }` });
+      vendorImports.set(at, [
+        ...(vendorImports.get(at) ?? []),
+        {
+          ...vendorImport({ package: pkg, version: null }),
+          namespace: ns,
+          note: `${unit.declares[0]} was ${pkg}'s CommonJS module record; it holds the package now`,
+        },
+      ]);
+    }
     for (let changed = true; changed; ) {
       changed = false;
       for (const unit of units) {

@@ -11,7 +11,17 @@ Nov 6, 2026 · `s2s grab https://racing.pmnd.rs/ --viewports desktop` (source: [
 **What was missed**
 
 - The untouched build took several Stage 4 fixes. Library code the index missed wrote to bindings that had become imports (react-dom's event priorities, drei's `useGLTF.clear = …`). three-stdlib imports constants three 0.139 had already removed (`GammaEncoding`), which the site's bundler left `undefined`; the scaffold now shims them the same way.
-- At runtime the rebuilt page throws `Cannot read properties of undefined (reading 'S')`, a library binding the post-install naming couldn't resolve. Until it is fixed, verify finds no scene at any keyframe.
+- At runtime the rebuilt page now mounts React and renders, then throws `tE is not a function` inside R3F's `<Canvas>`. The fingerprint index has `@react-three/fiber` only from 8.15 on, and the site ships an 8.0 build, so most of fiber stays inline as site code and clashes with the installed copy. Until fiber 8.0 is fingerprinted, verify finds no scene at any keyframe. Fixes on the way here:
+  - pnpm had installed fiber 9 (built for React 19) as drei's peer. Detection now treats drei as implying fiber, the fiber signature matches 8.x's error text, and the scaffold pins fiber and `react-reconciler` to the project's React.
+  - React's CommonJS module record (`var H = { exports: {} }`) was kept empty once React's code was dropped; Stage 4 now points such records at the package.
+  - Post-install naming now covers:
+    - aliases of merged namespaces (`{ ...react-dom, ...react-dom/client }`);
+    - bindings filed under the wrong library (three's `LoadingManager` under react-dom);
+    - CommonJS packages (`react-reconciler`);
+    - bindings imported from another chunk;
+    - functions told apart by their statics (`useGLTF.preload`);
+    - member reads (`EK.createRoot`, `Gf.exports.jsx`).
+    It also copies small internal helpers no package exports (supabase's `resolveFetch`).
 - Shaders: three's `ShaderChunk` wasn't found in the r139 bundle, so the 15 programs were written unfolded, and none matched a literal in the recovered modules (the custom shaders sit in drei and three-stdlib code that was dropped as vendor).
 - The network never went quiet during the deterministic pass (the game streams audio), so the keyframes may not repeat exactly.
 - Driving is keyboard input; the keyframe walk only covers time and scroll, so the race itself is never captured.

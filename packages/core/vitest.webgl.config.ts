@@ -7,6 +7,10 @@ import { defineProject } from "vitest/config";
  * run on their own, one file at a time, after everything else (`pnpm test`).
  */
 export default defineProject({
+  // The fingerprints package these tests build overlays with imports @rosdal/s2s-core: resolve
+  // it to source, so the tests don't need a core build first (CI tests before it builds).
+  resolve: { conditions: ["source"] },
+  ssr: { resolve: { conditions: ["source"] } },
   test: {
     env: { S2S_CACHE_DIR: path.join(tmpdir(), "s2s-test-cache") },
     name: "core-webgl",

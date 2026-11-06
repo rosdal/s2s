@@ -56,9 +56,10 @@ function INIT(cfg: { seed: number | null; full: boolean }): void {
   // real frames while the page's clock stands still.
   const realFrame: ((cb: () => void) => number) | null =
     typeof requestAnimationFrame === "function" ? requestAnimationFrame.bind(window) : null;
+  const RealChannel = MessageChannel;
   const drainTasks = () =>
     new Promise<void>((resolve) => {
-      const channel = new MessageChannel();
+      const channel = new RealChannel();
       channel.port1.onmessage = () => resolve();
       channel.port2.postMessage(0);
     });
@@ -66,6 +67,9 @@ function INIT(cfg: { seed: number | null; full: boolean }): void {
   // Decoding that runs off the clock (image bitmaps, response bodies, audio): s2s waits for it to
   // finish before the next clock step, so a slow machine lands it on the same step as a fast one.
   let pending = 0;
+  // Channel messages in flight; a port moved to a worker never answers here, so these get a
+  // shorter wait than decoding does.
+  let inFlight = 0;
   const track = <T>(p: Promise<T>): Promise<T> => {
     pending++;
     const done = () => {
@@ -94,6 +98,28 @@ function INIT(cfg: { seed: number | null; full: boolean }): void {
           return track(decode.apply(this, args));
         };
       }
+      // React's scheduler works through MessageChannel messages, which run off the frozen clock:
+      // a message still in flight is work that must land on this step (R3F mounting its canvas),
+      // or a busy machine starts the scene's animation a step late.
+      // A class, not a function: pages construct it with `new`.
+      w.MessageChannel = class extends RealChannel {
+        constructor() {
+          super();
+          for (const [from, to] of [
+            [this.port1, this.port2],
+            [this.port2, this.port1],
+          ] as const) {
+            const post = from.postMessage.bind(from);
+            to.addEventListener("message", () => {
+              inFlight = Math.max(0, inFlight - 1);
+            });
+            from.postMessage = ((...args: Any[]) => {
+              inFlight++;
+              return (post as Any)(...args);
+            }) as never;
+          }
+        }
+      };
     } catch {}
   }
 
@@ -579,6 +605,8 @@ function INIT(cfg: { seed: number | null; full: boolean }): void {
         if (realFrame) await new Promise<void>((resolve) => realFrame(() => resolve()));
         await drainTasks();
       }
+      for (let spins = 0; inFlight > 0 && spins < 30; spins++) await drainTasks();
+      if (inFlight > 0) inFlight = 0;
       await drainTasks();
     },
     canvases() {

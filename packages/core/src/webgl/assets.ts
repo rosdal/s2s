@@ -351,12 +351,18 @@ async function writeOutput(
   };
 }
 
+/** The stand-in environment map's size. */
+const ENV_W = 128;
+const ENV_H = 64;
+
 function placeholderFor(asset: AssetRecord, body: Buffer): Uint8Array {
   if (asset.type === "audio") return silentWav(asset.durationMs ?? 1000);
+  // PMREM needs a cube face of 16px or more (`width / 4`; r139 sizes its target `4 * face - 32`
+  // high), so a smaller stand-in compiles shaders with `1 / 0` texel sizes.
   if (asset.type === "environment")
     return /\.exr$/i.test(asset.url)
-      ? encodeExr(32, 16, gradientPixels(32, 16))
-      : encodeHdr(32, 16, gradientPixels(32, 16));
+      ? encodeExr(ENV_W, ENV_H, gradientPixels(ENV_W, ENV_H))
+      : encodeHdr(ENV_W, ENV_H, gradientPixels(ENV_W, ENV_H));
   if (asset.type === "texture" && isKtx2(body)) return ktx2Rgba(4, 4, new Uint8Array(64).fill(128));
   return placeholderPng();
 }

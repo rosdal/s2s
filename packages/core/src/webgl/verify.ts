@@ -19,7 +19,7 @@ import {
   loadDeterministic,
   walkKeyframes,
 } from "./session.js";
-import { diffSnapshots, type SceneSnapshot } from "./snapshot.js";
+import { diffSnapshots, type SceneSnapshot, sameScene } from "./snapshot.js";
 
 /** Canvas pixel-diff limits by asset mode; proxies only promise structure. */
 export const CANVAS_LIMITS: Record<AssetMode, number | null> = {
@@ -46,6 +46,8 @@ export interface WebglCheck {
   viewport: string;
   pass: boolean;
   reasons: string[];
+  /** What may make the walk less repeatable without failing it (a network that never quiets). */
+  notes?: string[];
   mode: AssetMode;
   canvasLimit: number | null;
   keyframes: WebglKeyframeCheck[];
@@ -68,6 +70,9 @@ function crop(image: Image, r: Rect): Image {
   return { width, height, data } as Image;
 }
 
+/** Physics bindings that step the simulation in a Web Worker. */
+const WORKER_PHYSICS = ["@pmndrs/cannon-worker-api", "@react-three/cannon"];
+
 /** Nodes a physics engine moves: their transforms change between the captured time steps. */
 function physicsNodes(snaps: Map<string, SceneSnapshot>): string[] {
   const t0 = snaps.get("t0");
@@ -75,10 +80,8 @@ function physicsNodes(snaps: Map<string, SceneSnapshot>): string[] {
   const moving = new Set<string>();
   for (const [id, snap] of snaps) {
     if (id === "t0" || !id.startsWith("t")) continue;
-    for (const scene of snap.scenes) {
-      const before = new Map(
-        t0.scenes.find((s) => s.name === scene.name)?.nodes.map((n) => [n.path, n]),
-      );
+    for (const [i, scene] of snap.scenes.entries()) {
+      const before = new Map(sameScene(t0.scenes, snap.scenes, i)?.nodes.map((n) => [n.path, n]));
       for (const n of scene.nodes) {
         const b = before.get(n.path);
         if (
@@ -125,6 +128,13 @@ export async function webglChecks(input: {
       : new Set((assets?.assets ?? []).filter((a) => a.type !== "decoder").map((a) => a.bodyHash));
   const canvasLimit = CANVAS_LIMITS[mode];
   const physics = ((input.framework.details.physics as string[] | undefined) ?? []).length > 0;
+  const packages = JSON.parse(
+    await readFile(path.join(paths.analysis, "packages.json"), "utf8").catch(() => "{}"),
+  ) as { packages?: { name: string; status: string }[] };
+  const workerPhysics = (packages.packages ?? []).some(
+    (p) =>
+      WORKER_PHYSICS.includes(p.name) && (p.status === "dependency" || p.status === "transitive"),
+  );
   const checks: WebglCheck[] = [];
   let browser: Browser | undefined;
   const onAbort = () => void browser?.close().catch(() => {});
@@ -149,6 +159,7 @@ export async function webglChecks(input: {
         );
         const ignore = physics ? physicsNodes(captured) : [];
         const reasons: string[] = [];
+        const notes: string[] = [];
         const results: WebglKeyframeCheck[] = [];
         const context = await deterministicContext(browser, v.viewport, agents[v.viewport]);
         const tab = await context.newPage();
@@ -172,7 +183,7 @@ export async function webglChecks(input: {
               clockStart: index.clockStart,
             },
           );
-          if (loaded.timedOut) reasons.push("the network never went quiet while loading");
+          if (loaded.timedOut) notes.push("the network never went quiet while loading");
           const plan: Keyframe[] = v.keyframes.map((k) => ({
             id: k.id,
             kind: k.kind,
@@ -183,7 +194,10 @@ export async function webglChecks(input: {
             return want
               ? diffSnapshots(want, snap, {
                   geometry: mode === "original",
-                  ...(id !== "t0" ? { ignoreTransforms: ignore } : {}),
+                  // Main-thread physics is on the frozen clock, so bodies count at rest (t0).
+                  // One that steps in a worker is off it and has run during load already: no
+                  // pose of its bodies repeats. Their names, hierarchy and presence still count.
+                  ...(id !== "t0" || workerPhysics ? { ignoreTransforms: ignore } : {}),
                 })
               : null;
           };
@@ -259,6 +273,7 @@ export async function webglChecks(input: {
           viewport: v.viewport,
           pass: reasons.length === 0,
           reasons,
+          ...(notes.length > 0 ? { notes } : {}),
           mode,
           canvasLimit,
           keyframes: results,

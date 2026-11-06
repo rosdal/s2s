@@ -109,8 +109,8 @@ export function encodeSnapshot(
     canvas: snap.canvas,
     camera: snap.camera,
     textures: snap.textures,
-    scenes: snap.scenes.map((scene) => {
-      const before = base.snapshot.scenes.find((s) => s.name === scene.name);
+    scenes: snap.scenes.map((scene, i) => {
+      const before = sameScene(base.snapshot.scenes, snap.scenes, i);
       const old = new Map((before?.nodes ?? []).map((n) => [n.path, n]));
       const changed = scene.nodes.filter((n) => !same(old.get(n.path), n));
       const paths = new Set(scene.nodes.map((n) => n.path));
@@ -154,8 +154,8 @@ export function decodeSnapshot(stored: StoredSnapshot, base?: SceneSnapshot): Sc
     canvas: stored.canvas,
     camera: stored.camera,
     textures: stored.textures,
-    scenes: stored.scenes.map((scene) => {
-      const before = base.scenes.find((s) => s.name === scene.name);
+    scenes: stored.scenes.map((scene, i) => {
+      const before = sameScene(base.scenes, stored.scenes, i);
       const byPath = new Map((before?.nodes ?? []).map((n) => [n.path, n]));
       for (const n of scene.changed) byPath.set(n.path, n);
       for (const p of scene.removed) byPath.delete(p);
@@ -245,8 +245,9 @@ export function diffSnapshots(
   const stats = { compared: 0, missing: 0, extra: 0, moved: 0 };
   const ignored = (p: string) =>
     (options.ignoreTransforms ?? []).some((q) => p === q || p.startsWith(`${q}/`));
-  for (const scene of expected.scenes) {
-    const other = actual.scenes.find((s) => s.name === scene.name);
+  const pairs = pairScenes(expected.scenes, actual.scenes);
+  for (const [i, scene] of expected.scenes.entries()) {
+    const other = pairs.get(i);
     if (!other) {
       lines.push(`Scene ${scene.name}: missing`);
       stats.missing += scene.nodes.length;
@@ -309,11 +310,52 @@ export function diffSnapshots(
         lines.push(`${n.path}: not in the capture`);
       }
   }
+  const paired = new Set(pairs.values());
   for (const scene of actual.scenes)
-    if (!expected.scenes.some((s) => s.name === scene.name))
-      lines.push(`Scene ${scene.name}: not in the capture`);
+    if (!paired.has(scene)) lines.push(`Scene ${scene.name}: not in the capture`);
   const max = options.maxLines ?? 50;
   const differences =
     lines.length > max ? [...lines.slice(0, max), `… and ${lines.length - max} more`] : lines;
   return { equal: lines.length === 0, differences, nodes: stats };
+}
+
+/**
+ * The scene in `list` that is `scenes[i]`: same name, same occurrence among scenes of that name
+ * (an R3F minimap renders a second, also unnamed, `Scene`). For keyframes of one walk.
+ */
+export function sameScene<T extends { name: string }, U extends { name: string }>(
+  list: T[],
+  scenes: U[],
+  i: number,
+): T | undefined {
+  const name = scenes[i]?.name;
+  const k = scenes.slice(0, i).filter((s) => s.name === name).length;
+  return list.filter((s) => s.name === name)[k];
+}
+
+/**
+ * Capture and rebuild scenes paired by name, and among scenes sharing one by the most node
+ * paths in common, as a rebuild may register them in another order.
+ */
+export function pairScenes<T extends { name: string; nodes: { path: string }[] }>(
+  expected: T[],
+  actual: T[],
+): Map<number, T> {
+  const out = new Map<number, T>();
+  const taken = new Set<T>();
+  const overlap = (a: T, b: T) => {
+    const paths = new Set(a.nodes.map((n) => n.path));
+    return b.nodes.filter((n) => paths.has(n.path)).length;
+  };
+  const candidates = expected
+    .flatMap((e, i) =>
+      actual.filter((a) => a.name === e.name).map((a) => ({ i, a, score: overlap(e, a) })),
+    )
+    .sort((x, y) => y.score - x.score);
+  for (const c of candidates) {
+    if (out.has(c.i) || taken.has(c.a)) continue;
+    out.set(c.i, c.a);
+    taken.add(c.a);
+  }
+  return out;
 }

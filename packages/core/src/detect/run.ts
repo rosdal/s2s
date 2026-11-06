@@ -373,8 +373,14 @@ async function run(
       if (record.status !== "transitive") continue;
       const parents = records.filter((r) => record.transitiveOf.includes(r.name));
       if (parents.every((p) => p.status === "review" || p.status === "rejected")) {
-        record.status = "review";
-        record.reason = `depends on ${record.transitiveOf.join(", ")}, which ${parents.length === 1 ? "is" : "are"} not accepted`;
+        // Evidence of its own (three's runtime `REVISION`) stands without the parent.
+        if (CONFIDENCE_RANK[record.confidence] >= CONFIDENCE_RANK[min]) {
+          record.status = record.dev ? "devDependency" : "dependency";
+          record.reason = null;
+        } else {
+          record.status = "review";
+          record.reason = `depends on ${record.transitiveOf.join(", ")}, which ${parents.length === 1 ? "is" : "are"} not accepted`;
+        }
         changed = true;
       }
     }

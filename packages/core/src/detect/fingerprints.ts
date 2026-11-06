@@ -4,6 +4,9 @@ import { fingerprintDir, openIndexes } from "../fingerprint/store.js";
 import type { DetectContext } from "./context.js";
 import { ByteIndex, type EvidenceInput, excerptOf } from "./evidence.js";
 
+/** Matched bytes that name a package on their own, whatever its version. */
+const STRONG_BYTES = 32 * 1024;
+
 export interface FingerprintOptions {
   /** Folder holding the shared index and the local overlay; defaults to the s2s cache. */
   dir?: string;
@@ -85,7 +88,12 @@ export async function collectFingerprints(
           package: match.name,
           version: match.version,
           signal: "fingerprint",
-          strength: match.confident ? "strong" : "weak",
+          // Tens of kilobytes of one package's functions name it even when the releases of a
+          // major can't be told apart (`1.x`): the version is unsure, the package isn't.
+          strength:
+            match.confident || (/^\d+\.x$/.test(match.version ?? "") && covered >= STRONG_BYTES)
+              ? "strong"
+              : "weak",
           trusted: true,
           location: {
             file: bundle.url,

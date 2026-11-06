@@ -18,6 +18,7 @@ import {
   type Draft,
   type ImportLine,
   type UnpackContext,
+  type VendorSpan,
 } from "./types.js";
 import { coveringPackage, vendorImport, vendorNamespace, wrapperEdits } from "./vendor.js";
 
@@ -171,6 +172,26 @@ function recordKind(node: t.Statement): "object" | "module" | null {
   )
     return "module";
   return null;
+}
+
+/**
+ * A statement that opens inside one package's range and is mostly covered by it is that package's
+ * code: a range ends where the matched functions do, and a long library function that differs
+ * from the indexed version (R3F's `Canvas`) is only matched in its nested callbacks.
+ */
+export function headedBy(
+  spans: VendorSpan[],
+  from: number,
+  to: number,
+  share = 0.5,
+): VendorSpan | undefined {
+  const head = spans.find((s) => s.start <= from && s.end > from);
+  if (!head) return undefined;
+  let covered = 0;
+  for (const s of spans)
+    if (s.package === head.package)
+      covered += Math.max(0, Math.min(s.end, to) - Math.max(s.start, from));
+  return covered / Math.max(1, to - from) >= share ? head : undefined;
 }
 
 /**
@@ -554,7 +575,8 @@ export function splitScope(
     const rest = chunk.vendor.filter((s) => !wrappers.covered.includes(s));
     for (const unit of units) {
       if (unit.edits.some((e) => e.text.startsWith("() => __vendor_"))) continue;
-      const span = coveringPackage(rest, unit.start, unit.end);
+      const span =
+        coveringPackage(rest, unit.start, unit.end) ?? headedBy(rest, unit.start, unit.end);
       if (!span) continue;
       const call = wrapperCall(unit.node);
       const d = (unit.node as t.VariableDeclaration).declarations?.[0];
@@ -844,6 +866,8 @@ export interface InlinedVendor {
   package: string;
   /** The inlined expression's source, for naming it after install. */
   text: string;
+  /** The recovered module that reads it, when the name is that module's alone. */
+  file?: string;
 }
 
 /** `var r = new class …{…}(…)` (or `new function…`): the inlined callee's span and the binding. */

@@ -740,7 +740,7 @@ async function run(
         files.push({ file: path.join(paths.root, moved), bundle: path.join(paths.bodies, hash) });
     }
     const unique = [...new Map(files.map((f) => [f.file, f])).values()];
-    const inline = (await readJson<{ inlined: { name: string; text: string }[] }>(
+    const inline = (await readJson<{ inlined: { name: string; text: string; file?: string }[] }>(
       path.join(paths.analysis, "vendor-inline.json"),
     )) ?? { inlined: [] };
     const urlOf = new Map([...bodyOf].map(([url, hash]) => [hash, url]));

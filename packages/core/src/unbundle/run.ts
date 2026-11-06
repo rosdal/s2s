@@ -711,7 +711,12 @@ function renderModule(
         for (const n of line.names) {
           add(`const ${n.local} = ${ns};`);
           if (vendor.text)
-            inlined.push({ name: n.local, package: vendor.package, text: vendor.text });
+            inlined.push({
+              name: n.local,
+              package: vendor.package,
+              text: vendor.text,
+              file: p.file,
+            });
         }
         notes.push(
           `${line.names.map((n) => n.local).join(", ")} came from ${vendor.package}'s code inlined in another chunk; import what it stands for instead`,

@@ -286,31 +286,44 @@ export async function walkKeyframes(
   };
   for (const keyframe of plan) {
     options.signal?.throwIfAborted();
+    let target = clockMs;
     if (keyframe.kind === "time") {
-      const target = options.baseMs + keyframe.value;
-      if (target > clockMs) {
-        await advance(page, target - clockMs);
-        clockMs = target;
+      target = options.baseMs + keyframe.value;
+      // Matching a capture: a rebuild that loaded a step sooner or later runs that much ahead or
+      // behind, so the search window opens before the keyframe as well as after it.
+      const from = options.matches ? target - (options.maxLagMs ?? 0) : target;
+      if (from > clockMs) {
+        await advance(page, from - clockMs);
+        clockMs = from;
       }
     } else {
       await page.evaluate((y) => window.scrollTo(0, y), keyframe.value * vh);
       // Scroll events are dispatched on real frames; give the browser one before stepping.
       await new Promise((r) => setTimeout(r, 60));
       await settleScroll();
+      target = clockMs;
     }
     // Let the compositor present the last frame before the screenshot.
     await new Promise((r) => setTimeout(r, 60));
     const scrollY = await page.evaluate(() => Math.round(window.scrollY));
     let snapshot = await snapshotOf(page);
-    let lagMs = 0;
-    if (options.matches)
-      while (!options.matches(keyframe, snapshot) && lagMs < (options.maxLagMs ?? 0)) {
+    if (options.matches) {
+      const until = target + (options.maxLagMs ?? 0);
+      while (!options.matches(keyframe, snapshot) && clockMs < until) {
         await page.clock.runFor(LOAD_STEP_MS);
         await settle(page);
-        lagMs += LOAD_STEP_MS;
         clockMs += LOAD_STEP_MS;
         snapshot = await snapshotOf(page);
       }
+      // No match in the window: report the keyframe's own time, not the window's end.
+      if (!options.matches(keyframe, snapshot) && clockMs < target) {
+        await page.clock.runFor(target - clockMs);
+        await settle(page);
+        clockMs = target;
+        snapshot = await snapshotOf(page);
+      }
+    }
+    const lagMs = clockMs - target;
     const canvases = await page
       .evaluate(() =>
         (window as unknown as { __s2sWebgl: { canvases(): number[][] } }).__s2sWebgl.canvases(),

@@ -38,8 +38,10 @@ import {
   decodeSnapshot,
   diffSnapshots,
   encodeSnapshot,
+  pairScenes,
   type SceneSnapshot,
   type SnapshotNode,
+  sameScene,
 } from "../src/webgl/snapshot.js";
 
 describe("keyframes", () => {
@@ -429,5 +431,48 @@ describe("absorbSelfNamed", () => {
       gsap,
       null,
     ]);
+  });
+});
+
+describe("nameVendorBindings copies helpers transitively", () => {
+  test("a helper's own helper comes along, declared before it", async () => {
+    const reader = () => new PackageReader("/nonexistent", "x");
+    const code = [
+      'import * as __s from "lib";',
+      "const pe = __s;",
+      "export const v = pe({}, {});",
+    ].join("\n");
+    const bundleCode =
+      "var Tw = (n, e, t) => (n[e] = t); var pe = (n, e) => { for (var t in e) Tw(n, t, e[t]); return n; };";
+    const out = await nameVendorBindings(
+      code,
+      bundleDeclarations(bundleCode),
+      reader,
+      [],
+      bundleCode,
+    );
+    expect(out.copied.sort()).toEqual(["Tw", "pe"]);
+    const at = (s: string) => out.code.indexOf(s);
+    expect(at("const Tw = (n, e, t) => (n[e] = t);")).toBeGreaterThan(-1);
+    expect(at("const Tw")).toBeLessThan(at("const pe"));
+  });
+});
+
+describe("scene pairing", () => {
+  const scene = (name: string, ...paths: string[]) => ({
+    name,
+    nodes: paths.map((path) => ({ path })),
+  });
+  test("two scenes of one name pair by the nodes they share, in any order", () => {
+    const main = scene("Scene", "Scene", "Scene/Mesh#0", "Scene/Group#0");
+    const minimap = scene("Scene", "Scene", "Scene/Sprite#0", "Scene/Sprite#1");
+    const pairs = pairScenes([main, minimap], [minimap, main]);
+    expect(pairs.get(0)).toBe(main);
+    expect(pairs.get(1)).toBe(minimap);
+  });
+  test("keyframes of one walk pair by occurrence", () => {
+    const a = [scene("Scene", "x"), scene("Scene", "y")];
+    const b = [scene("Scene", "x2"), scene("Scene", "y2")];
+    expect(sameScene(a, b, 1)).toBe(a[1]);
   });
 });

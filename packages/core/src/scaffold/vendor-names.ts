@@ -64,7 +64,32 @@ export function shapeOf(node: t.Node): Shape {
   };
   visit(node, 0);
   for (const x of statics.get(node) ?? []) tokens.add(x);
+  if (tokens.size === 0) for (const x of structureOf(node)) tokens.add(x);
   return tokens;
+}
+
+/**
+ * For a declaration with no names or strings to go on (`useThree(selector = (s) => s, eq)`):
+ * its parameter count and the parent-child pairs of its node types, which survive minifying
+ * better than names. Only used when nothing else is there to compare.
+ */
+function structureOf(node: t.Node): Set<string> {
+  const out = new Set<string>();
+  const params = (node as { params?: unknown[] }).params;
+  if (Array.isArray(params)) out.add(`n:${params.length}`);
+  const visit = (n: t.Node, parent: string, depth: number) => {
+    if (depth > 30) return;
+    out.add(`t:${parent}>${n.type}`);
+    for (const key of Object.keys(n) as (keyof typeof n)[]) {
+      if (key === "loc" || key === "start" || key === "end" || key === "leadingComments") continue;
+      const value = n[key] as unknown;
+      const kids = Array.isArray(value) ? value : [value];
+      for (const v of kids)
+        if (v && typeof v === "object" && "type" in v) visit(v as t.Node, n.type, depth + 1);
+    }
+  };
+  visit(node, "", 0);
+  return out;
 }
 
 /**
@@ -154,11 +179,16 @@ function declarations(ast: t.File): Map<string, t.Node> {
 /** Parse a bundle once and keep its top-level declarations. */
 export function bundleDeclarations(code: string): Map<string, t.Node> {
   try {
-    return declarations(parseCode(code));
+    const out = declarations(parseCode(code));
+    for (const node of out.values()) homeOf.set(node, out);
+    return out;
   } catch {
     return new Map();
   }
 }
+
+/** The bundle's declarations each declaration came from, for ordering look-alikes. */
+const homeOf = new WeakMap<t.Node, Map<string, t.Node>>();
 
 /** A bundle's imports of other chunks (`import { k as j } from "./vendor.js"`) and its exports. */
 export function bundleLinks(code: string): {
@@ -212,7 +242,12 @@ export function bestExport(
   const best = scored[0];
   if (!best || best.score < MIN_SIMILARITY) return null;
   // One value exported under two names (`gsap` and `default`) is one candidate, not a tie.
-  const rival = scored.find((e) => e !== best && jaccard(e.shape, best.shape) < 1);
+  // A structure-only shape (`(fn) => push(fn, list)`) is shared by look-alike exports
+  // (`addEffect`, `addTail`): an identical one there is a tie.
+  const structural = [...best.shape].every((x) => x.startsWith("t:") || x.startsWith("n:"));
+  const rival = scored.find(
+    (e) => e !== best && (structural ? e.name !== "default" : jaccard(e.shape, best.shape) < 1),
+  );
   if (rival && best.score - rival.score < 0.05) return null;
   // A tiny shape (`{ clone, merge }`) only counts as an exact match nothing else comes near.
   if (
@@ -432,6 +467,36 @@ export class PackageReader {
     }
   }
 
+  /**
+   * `names` in the order the package's source declares them, looking through the entry and the
+   * modules it imports from; null when one isn't found.
+   */
+  async declarationOrder(names: string[]): Promise<string[] | null> {
+    const entry = await this.entry();
+    if (!entry) return null;
+    const files = [entry];
+    const text = await readFile(entry, "utf8").catch(() => "");
+    for (const m of text.matchAll(/from\s*["'](\.[^"']+)["']/g)) {
+      const next = this.#resolve(entry, m[1] as string);
+      if (next && !files.includes(next)) files.push(next);
+    }
+    const found: { name: string; file: number; at: number }[] = [];
+    for (const name of names) {
+      const re = new RegExp(`\\b(?:const|let|var|function)\\s+${name.replace(/\$/g, "\\$")}\\b`);
+      let hit: { name: string; file: number; at: number } | undefined;
+      for (const [i, file] of files.entries()) {
+        const at = (await readFile(file, "utf8").catch(() => "")).search(re);
+        if (at >= 0) {
+          hit = { name, file: i, at };
+          break;
+        }
+      }
+      if (!hit) return null;
+      found.push(hit);
+    }
+    return found.sort((a, b) => a.file - b.file || a.at - b.at).map((f) => f.name);
+  }
+
   /** The browser ESM entry. */
   async entry(): Promise<string | undefined> {
     const pkg = await this.manifest();
@@ -622,6 +687,22 @@ export async function nameVendorBindings(
     if (parts.length > 0 && parts.every(Boolean))
       merged.set(d.id.name, { pkgs: parts as string[], node });
   }
+  // `const __vendor_x$chunk = __vendor_x`: another chunk's view of a library, read as the library.
+  for (const node of ast.program.body) {
+    if (node.type !== "VariableDeclaration" || node.declarations.length !== 1) continue;
+    const d = node.declarations[0] as t.VariableDeclarator;
+    if (
+      d.id.type !== "Identifier" ||
+      !d.id.name.startsWith("__vendor") ||
+      d.init?.type !== "Identifier"
+    )
+      continue;
+    const target = d.init.name;
+    const pkgs =
+      merged.get(target)?.pkgs ??
+      (namespaces.has(target) ? [namespaces.get(target)?.pkg as string] : null);
+    if (pkgs) merged.set(d.id.name, { pkgs, node });
+  }
   const pkgsOf = (ns: string): string[] =>
     merged.get(ns)?.pkgs ?? [(namespaces.get(ns) as { pkg: string }).pkg];
   const aliases: {
@@ -679,7 +760,9 @@ export async function nameVendorBindings(
     }
     const shape = shapeOf(decl);
     for (const pkg of own) {
-      const hit = await resolveBinding(readerOf(pkg), shape);
+      const hit =
+        (await resolveBinding(readerOf(pkg), shape)) ??
+        (await byOrder(readerOf(pkg), decl, shape, bundle));
       if (hit) {
         resolved.set(local, hit);
         return;
@@ -717,6 +800,22 @@ export async function nameVendorBindings(
   // A library's internal helper (supabase's `resolveFetch`) is no export: copy its definition from
   // the bundle when it is a small function whose free names are globals or this module's own.
   const copies = new Map<string, string>();
+  // Helpers copied only as another copy's dependency, declared before the alias that needs them.
+  const helpers = new Map<string, string>();
+  const before = new Map<t.VariableDeclaration, string[]>();
+  // Copies that run on load (a call), and where each top-level name of the module is declared.
+  const eager = new Set<string>();
+  const eagerDeps: { name: string; decl: t.VariableDeclaration }[] = [];
+  const declaredEnd = new Map<string, number>();
+  for (const node of ast.program.body) {
+    const names =
+      node.type === "VariableDeclaration"
+        ? node.declarations.flatMap((d) => (d.id.type === "Identifier" ? [d.id.name] : []))
+        : (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration") && node.id
+          ? [node.id.name]
+          : [];
+    for (const n of names) declaredEnd.set(n, node.end ?? 0);
+  }
   if (bundleCode) {
     const own = new Set<string>();
     for (const node of ast.program.body) {
@@ -731,19 +830,58 @@ export async function nameVendorBindings(
         own.add(node.id.name);
       }
     }
+    const helperText = (name: string): string | null => {
+      if (notCopied.has(name)) return null;
+      const decl = bundle.get(name);
+      const fn =
+        decl?.type === "ArrowFunctionExpression" ||
+        decl?.type === "FunctionExpression" ||
+        decl?.type === "FunctionDeclaration";
+      // `var _w = Object.prototype.hasOwnProperty`: a global's member, safe to read again.
+      const globalMember = (n: t.Node): boolean =>
+        n.type === "MemberExpression"
+          ? !n.computed && globalMember(n.object)
+          : n.type === "Identifier" && !bundle.has(n.name);
+      // `UM = React.createContext(null)`: a library's own singleton nothing exports. It runs on
+      // load, so it is placed after what it reads (see `eager`).
+      const call = decl?.type === "CallExpression" || decl?.type === "NewExpression";
+      if (!decl || !(fn || call || globalMember(decl)) || decl.start == null || decl.end == null)
+        return null;
+      const text = bundleCode.slice(decl.start, decl.end);
+      if (text.length > MAX_COPIED_HELPER) return null;
+      if (call) eager.add(name);
+      return text;
+    };
+    // The helper and the bundle helpers it reads that this module lacks (`__spreadValues` reads
+    // `__defNormalProp`), dependencies first; null when any of them can't be copied.
+    const closure = (name: string, stack: Set<string>): string[] | null => {
+      const text = helperText(name);
+      const free = text === null ? null : freeNames(text);
+      if (!free) return null;
+      const order: string[] = [];
+      for (const n of free) {
+        if (n === name || own.has(n) || !bundle.has(n) || stack.has(n) || order.includes(n))
+          continue;
+        const sub = closure(n, new Set([...stack, name]));
+        if (!sub || order.length + sub.length > MAX_COPIED_DEPS) return null;
+        for (const x of sub) if (!order.includes(x)) order.push(x);
+      }
+      order.push(name);
+      return order;
+    };
     for (const a of aliases)
       for (const p of a.parts) {
-        if (!p.ns || !p.id || resolved.has(p.id) || notCopied.has(p.id)) continue;
-        const decl = bundle.get(p.id);
-        const fn =
-          decl?.type === "ArrowFunctionExpression" ||
-          decl?.type === "FunctionExpression" ||
-          decl?.type === "FunctionDeclaration";
-        if (!decl || !fn || decl.start == null || decl.end == null) continue;
-        const text = bundleCode.slice(decl.start, decl.end);
-        if (text.length > MAX_COPIED_HELPER) continue;
-        const free = freeNames(text);
-        if (free && free.every((n) => own.has(n) || !bundle.has(n))) copies.set(p.id, text);
+        if (!p.ns || !p.id || resolved.has(p.id)) continue;
+        const order = closure(p.id, new Set());
+        if (!order) continue;
+        for (const n of order) {
+          if (n === p.id || own.has(n)) continue;
+          helpers.set(n, helperText(n) as string);
+          own.add(n);
+          if (eager.has(n)) eagerDeps.push({ name: n, decl: a.decl });
+          else before.set(a.decl, [...(before.get(a.decl) ?? []), n]);
+        }
+        copies.set(p.id, helperText(p.id) as string);
       }
   }
   if (resolved.size === 0 && copies.size === 0) return { code, named: [], copied: [] };
@@ -762,6 +900,18 @@ export async function nameVendorBindings(
         continue;
       }
       const copy = copies.get(p.id);
+      if (copy && eager.has(p.id)) {
+        // After the last statement declaring a name it reads, so those are set when it runs.
+        const at = Math.max(
+          a.decl.end ?? 0,
+          ...(freeNames(copy) ?? []).map((n) => declaredEnd.get(n) ?? 0),
+        );
+        if (at > (a.decl.end ?? 0)) {
+          edits.push({ start: at, end: at, text: `\nconst ${p.id} = ${copy};` });
+          changed = true;
+          continue;
+        }
+      }
       if (copy) {
         if (bundle.get(p.id)?.type === "FunctionDeclaration") declared.push(copy);
         else kept.push(`${p.id} = ${copy}`);
@@ -782,10 +932,27 @@ export async function nameVendorBindings(
       edits.push({
         start: a.decl.start ?? 0,
         end: a.decl.end ?? 0,
-        text: [kept.length === 0 ? "" : `${a.decl.kind} ${kept.join(",\n  ")};`, ...declared]
+        text: [
+          ...(before.get(a.decl) ?? []).map((n) => {
+            const text = helpers.get(n) as string;
+            return bundle.get(n)?.type === "FunctionDeclaration" ? text : `const ${n} = ${text};`;
+          }),
+          kept.length === 0 ? "" : `${a.decl.kind} ${kept.join(",\n  ")};`,
+          ...declared,
+        ]
           .filter(Boolean)
           .join("\n"),
       });
+  }
+  // A copy's on-load dependencies (`JM = createContext(null)` under `wP = () => useContext(JM)`):
+  // after what they read, and past the alias statement, which is rewritten in place.
+  for (const { name, decl } of eagerDeps) {
+    const text = helpers.get(name) as string;
+    const at = Math.max(
+      (decl.end ?? 0) + 1,
+      ...(freeNames(text) ?? []).map((n) => declaredEnd.get(n) ?? 0),
+    );
+    edits.push({ start: at, end: at, text: `\nconst ${name} = ${text};\n` });
   }
   for (const [local, { pkg, node }] of namespaces) {
     const lines: string[] = [];
@@ -839,11 +1006,47 @@ export async function nameVendorBindings(
       lines.push(`import { ${names.join(", ")} } from ${JSON.stringify(spec)};`);
     edits.push({ start: node.start ?? 0, end: node.end ?? 0, text: lines.join("\n") });
   }
-  return { code: applyEdits(code, edits), named, copied: [...copies.keys()] };
+  return {
+    code: applyEdits(code, edits),
+    named,
+    copied: [...copies.keys(), ...[...before.values()].flat(), ...eagerDeps.map((d) => d.name)],
+  };
+}
+
+/**
+ * Look-alike exports with one structure (`addEffect`, `addAfterEffect`, `addTail` are each
+ * `(cb) => createSubs(cb, list)`) can't be told apart by shape, but a bundle keeps them in source
+ * order: the n-th look-alike in the bundle is the n-th in the package's source.
+ */
+async function byOrder(
+  reader: PackageReader,
+  decl: t.Node,
+  shape: Shape,
+  bundle: Map<string, t.Node>,
+): Promise<Resolution | null> {
+  if (![...shape].every((x) => x.startsWith("t:") || x.startsWith("n:"))) return null;
+  const entry = await reader.entry();
+  if (!entry) return null;
+  const same = (a: Shape, b: Shape) => a.size === b.size && [...a].every((x) => b.has(x));
+  const tied = [...(await reader.exportsOf(entry))]
+    .filter(([name, s]) => name !== "default" && same(s, shape))
+    .map(([name]) => name);
+  if (tied.length < 2) return null;
+  const mine = [...new Set((homeOf.get(decl) ?? bundle).values())]
+    .filter((n) => same(shapeOf(n), shape))
+    .sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
+  const at = mine.indexOf(decl);
+  if (at < 0 || mine.length > tied.length) return null;
+  const positions = await reader.declarationOrder(tied);
+  if (!positions) return null;
+  const name = positions[at];
+  return name ? { specifier: reader.name, name, score: 1 } : null;
 }
 
 /** Longest helper copied from the bundle, in characters. */
 const MAX_COPIED_HELPER = 2000;
+/** Most helpers one copy may bring along. */
+const MAX_COPIED_DEPS = 8;
 
 /** The names a function's text reads without declaring, or null when it does not parse alone. */
 function freeNames(text: string): string[] | null {
@@ -869,15 +1072,25 @@ export async function resolveVendorNames(
   projectDir: string,
   files: { file: string; bundle: string }[],
   /** Library classes Stage 4 found inlined into site statements (`analysis/vendor-inline.json`). */
-  inlined: { name: string; text: string }[] = [],
+  inlined: { name: string; text: string; file?: string }[] = [],
   /** The bundle a chunk import of `bundle` (`./vendor.c4.js`) loads, when it was captured. */
   chunkOf: (bundle: string, spec: string) => string | undefined = () => undefined,
 ): Promise<NamedBinding[]> {
   const extra = new Map<string, t.Node>();
+  // Fragments named by one module's import of another chunk: that module's names alone (the
+  // vendor chunk's own `le` is not the index chunk's `le`).
+  const local: { module: string; name: string; node: t.Node }[] = [];
   for (const i of inlined) {
     try {
       const stmt = parseCode(`(${i.text});`).program.body[0];
-      if (stmt?.type === "ExpressionStatement") extra.set(i.name, stmt.expression);
+      if (stmt?.type !== "ExpressionStatement") continue;
+      if (i.file)
+        local.push({
+          module: i.file.replace(/^recovered\/unbundled\//, "").replace(/\.[jt]sx?$/, ""),
+          name: i.name,
+          node: stmt.expression,
+        });
+      else extra.set(i.name, stmt.expression);
     } catch {
       // A fragment that no longer parses alone stays unnamed.
     }
@@ -943,14 +1156,24 @@ export async function resolveVendorNames(
       for (const [k, v] of extra) if (!names.has(k)) decls.set(k, v);
       bundles.set(bundle, decls);
     }
+    const posixFile = file
+      .split(path.sep)
+      .join("/")
+      .replace(/\.[jt]sx?$/, "");
+    const mine = local.filter((l) => posixFile.endsWith(`_recovered/${l.module}`));
+    let fileDecls = decls;
+    if (mine.length > 0) {
+      fileDecls = new Map(decls);
+      for (const l of mine) if (!borrowed.get(bundle)?.has(l.name)) fileDecls.set(l.name, l.node);
+    }
     // Inlined fragments carry offsets into their own text, not the bundle's: never copied.
     const result = await nameVendorBindings(
       code,
-      decls,
+      fileDecls,
       readerOf,
       projectPkgs,
       texts.get(bundle) ?? "",
-      new Set([...extra.keys(), ...(borrowed.get(bundle) ?? [])]),
+      new Set([...extra.keys(), ...mine.map((l) => l.name), ...(borrowed.get(bundle) ?? [])]),
     );
     if (result.named.length === 0 && result.copied.length === 0) continue;
     await writeFile(file, result.code);

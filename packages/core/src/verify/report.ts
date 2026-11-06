@@ -46,6 +46,7 @@ export function renderReportMd(report: VerifyReport): string {
     for (const w of report.webgl.filter((x) => !x.pass)) {
       out.push("", `### ${w.page} · ${w.viewport} (WebGL)`, "");
       for (const reason of w.reasons) out.push(`- ${reason}`);
+      for (const note of w.notes ?? []) out.push(`- Note: ${note}`);
       for (const k of w.keyframes.filter((x) => !x.pass)) {
         out.push(`- \`${k.keyframe}\`:`);
         for (const d of k.differences.slice(0, 12)) out.push(`  - ${d}`);

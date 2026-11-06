@@ -287,7 +287,14 @@ export async function matchBundles(
       let shared = 0;
       // Only overlap with smaller packages counts: a bundle contains its parts, never the reverse.
       const mine = universe.get(a.name)?.indexed ?? 0;
-      const parts = accepted.filter((o) => o !== a && (universe.get(o.name)?.indexed ?? 0) < mine);
+      // A plugin that depends on the package (`@tweakpane/plugin-*` on tweakpane) carries a copy
+      // of it; that copy is the package's, not a part the package vendors.
+      const parts = accepted.filter(
+        (o) =>
+          o !== a &&
+          (universe.get(o.name)?.indexed ?? 0) < mine &&
+          !depsOf.get(o.name)?.has(a.name),
+      );
       for (const h of all) if (parts.some((o) => rawFunctions.get(o.name)?.has(h))) shared++;
       const overlap = shared / all.size;
       if (overlap >= overlapLimit && (!worst || overlap > worst.overlap)) worst = { at, overlap };

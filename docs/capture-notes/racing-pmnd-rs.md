@@ -10,7 +10,7 @@ Nov 5, 2026 · `s2s grab https://racing.pmnd.rs/ --viewports desktop` (source: [
 
 **What was missed**
 
-- The untouched build: a react-dom fragment the fingerprint index missed assigns to the imported namespace (`fg.ContinuousEventPriority = 4`). That is Stage 4's vendor rewrite, not WebGL-specific.
+- The untouched build. Library code the index missed assigned to bindings Stage 4 had turned into imports (`fg.ContinuousEventPriority = 4` in react-dom), which gave 13 errors. Stage 4 now keeps those declarations local, and one error is left: drei's inlined code assigns to the namespace it is exported through (`AM.clear = …`). That is a Stage 4 limit, not a WebGL one.
 - Shaders: three's `ShaderChunk` wasn't found in the r139 bundle, so the 15 programs were written unfolded, and none matched a literal in the recovered modules (the custom shaders sit in drei and three-stdlib code that was dropped as vendor).
 - The network never went quiet during the deterministic pass (the game streams audio), so the keyframes may not repeat exactly.
 - Driving is keyboard input; the keyframe walk only covers time and scroll, so the race itself is never captured.

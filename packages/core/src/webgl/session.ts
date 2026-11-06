@@ -244,6 +244,8 @@ export interface WalkedKeyframe {
   screenshot: Buffer;
   /** Canvas rectangles in CSS pixels, for masking the page diff. */
   canvases: number[][];
+  /** How far past the keyframe's time the snapshot was taken to match (verify only). */
+  lagMs: number;
 }
 
 /**
@@ -253,7 +255,17 @@ export interface WalkedKeyframe {
 export async function walkKeyframes(
   page: Page,
   spec: Keyframe[] | "auto",
-  options: { baseMs: number; maxKeyframes?: number; signal?: AbortSignal },
+  options: {
+    baseMs: number;
+    maxKeyframes?: number;
+    signal?: AbortSignal;
+    /**
+     * Verify's check: when a snapshot doesn't match, the clock steps on (up to `maxLagMs`) and
+     * tries again, since a rebuilt site may load its assets a step or two later.
+     */
+    matches?: (keyframe: Keyframe, snapshot: SceneSnapshot | null) => boolean;
+    maxLagMs?: number;
+  },
   onKeyframe: (k: WalkedKeyframe) => Promise<void>,
 ): Promise<Keyframe[]> {
   const plan = planKeyframes(spec, await scrollSteps(page), options.maxKeyframes);
@@ -289,14 +301,23 @@ export async function walkKeyframes(
     // Let the compositor present the last frame before the screenshot.
     await new Promise((r) => setTimeout(r, 60));
     const scrollY = await page.evaluate(() => Math.round(window.scrollY));
-    const snapshot = await snapshotOf(page);
+    let snapshot = await snapshotOf(page);
+    let lagMs = 0;
+    if (options.matches)
+      while (!options.matches(keyframe, snapshot) && lagMs < (options.maxLagMs ?? 0)) {
+        await page.clock.runFor(LOAD_STEP_MS);
+        await settle(page);
+        lagMs += LOAD_STEP_MS;
+        clockMs += LOAD_STEP_MS;
+        snapshot = await snapshotOf(page);
+      }
     const canvases = await page
       .evaluate(() =>
         (window as unknown as { __s2sWebgl: { canvases(): number[][] } }).__s2sWebgl.canvases(),
       )
       .catch(() => [] as number[][]);
     const screenshot = await page.screenshot({ animations: "disabled", caret: "hide" });
-    await onKeyframe({ keyframe, scrollY, clockMs, snapshot, screenshot, canvases });
+    await onKeyframe({ keyframe, scrollY, clockMs, snapshot, screenshot, canvases, lagMs });
   }
   return plan;
 }

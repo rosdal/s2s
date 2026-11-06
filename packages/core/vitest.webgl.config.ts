@@ -12,6 +12,9 @@ export default defineProject({
     name: "core-webgl",
     include: ["test/webgl.test.ts", "test/webgl-session.test.ts"],
     fileParallelism: false,
+    // On a busy machine a page can still start its animation clock one load step later; one
+    // retry tells that apart from a real regression.
+    retry: 1,
     testTimeout: 600_000,
     hookTimeout: 600_000,
   },

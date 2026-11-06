@@ -32,6 +32,8 @@ interface Unit {
   uses: Map<string, number>;
   /** Bindings of other units this one assigns to. */
   writes: Set<number>;
+  /** Units whose bindings this one mutates through a member (`x.a = 1`, `x.n++`). */
+  mutates: Set<number>;
   imports: { local: string; source: string; imported: string }[];
   sideEffectImport: string | null;
   /** Names the chunk exports from this unit, as `[exported, local]`. */
@@ -88,6 +90,28 @@ export function absorbWedged(units: Unit[]): void {
         }
       }
       i = j;
+    }
+  }
+}
+
+/**
+ * A dropped statement whose binding kept code assigns (`_zstd ||= …`) or mutates through a member
+ * (`internals.priority = 4`) stays: an import is read-only, so the binding must be the module's
+ * own. Repeated, as a kept statement may write further dropped ones.
+ */
+export function keepWritten(units: Unit[]): void {
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const unit of units) {
+      if (unit.dropped) continue;
+      for (const target of [...unit.writes, ...unit.mutates]) {
+        const owner = units[target];
+        // An exported statement is reached from other chunks through the vendor import instead.
+        if (owner?.dropped && owner.exported.length === 0) {
+          owner.dropped = null;
+          changed = true;
+        }
+      }
     }
   }
 }
@@ -222,6 +246,7 @@ export function splitScope(
     declares: [],
     uses: new Map(),
     writes: new Set(),
+    mutates: new Set(),
     imports: [],
     sideEffectImport: null,
     exported: [],
@@ -272,7 +297,18 @@ export function splitScope(
           ...(getterCalls.get(name) ?? []),
           [start(call.node), end(call.node)],
         ]);
-      if (user >= 0 && user !== at) (units[user] as Unit).uses.set(name, at);
+      if (user >= 0 && user !== at) {
+        (units[user] as Unit).uses.set(name, at);
+        const member = ref.parentPath;
+        const target = member?.parentPath;
+        if (
+          member?.isMemberExpression() &&
+          member.node.object === ref.node &&
+          ((target?.isAssignmentExpression() && target.node.left === member.node) ||
+            target?.isUpdateExpression())
+        )
+          (units[user] as Unit).mutates.add(at);
+      }
     }
     for (const violation of binding.constantViolations) {
       const writer = unitAt(start(violation.node));
@@ -428,6 +464,7 @@ export function splitScope(
       }
     }
     absorbWedged(units);
+    keepWritten(units);
     for (let changed = true; changed; ) {
       changed = false;
       for (const unit of units) {

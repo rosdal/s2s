@@ -11,7 +11,7 @@ Nov 5, 2026 · `s2s grab https://bruno-simon.com/ --viewports desktop` (source: 
 
 **What was missed**
 
-- The untouched build: two recovered parts both declare `__vitePreload`, and a binding inside three's inlined code (`Vector3$1`) is redeclared. Both come from Stage 4 splitting a Vite bundle, not from the WebGL stages.
+- The untouched build. The first run failed because the recovered copy of Vite's preload helper collided with the one Vite injects (now renamed), and because KTX2Loader code assigned to module state Stage 4 had made an import (`_zstd ||= …`, now kept local). Five errors are left: the parts of an esbuild-split chunk (`dist/part-1.js`) don't export names other chunks import. That is a Stage 4 limit, not a WebGL one.
 - Shaders: three's `ShaderChunk` wasn't found (the WebGPU build ships TSL node code instead), so programs were written unfolded; WGSL and TSL are out of scope.
 - The network never went quiet during the deterministic pass (sound streams), so keyframes may not repeat exactly.
 - The site is driven by keyboard and pointer (a car you steer); the walk covers time steps only, as the page doesn't scroll.

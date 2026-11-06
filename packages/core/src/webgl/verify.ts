@@ -28,8 +28,13 @@ export const CANVAS_LIMITS: Record<AssetMode, number | null> = {
   original: 0.03,
 };
 
+/** A rebuilt site may load its assets a few steps later; verify waits this long for a match. */
+export const MAX_LAG_MS = 300;
+
 export interface WebglKeyframeCheck {
   keyframe: string;
+  /** Milliseconds past the keyframe's time the scene matched (0: on time). */
+  lagMs: number;
   pass: boolean;
   differences: string[];
   canvasDiff: number | null;
@@ -173,21 +178,30 @@ export async function webglChecks(input: {
             kind: k.kind,
             value: k.value,
           }));
+          const compare = (id: string, snap: SceneSnapshot) => {
+            const want = captured.get(id);
+            return want
+              ? diffSnapshots(want, snap, {
+                  geometry: mode === "original",
+                  ...(id !== "t0" ? { ignoreTransforms: ignore } : {}),
+                })
+              : null;
+          };
           await walkKeyframes(
             tab,
             plan,
-            { baseMs: v.baseMs, maxKeyframes: plan.length },
+            {
+              baseMs: v.baseMs,
+              maxKeyframes: plan.length,
+              maxLagMs: MAX_LAG_MS,
+              matches: (kf, snap) => snap !== null && (compare(kf.id, snap)?.equal ?? true),
+            },
             async (k) => {
               const want = captured.get(k.keyframe.id);
               const differences: string[] = [];
               if (want && !k.snapshot) differences.push("no three.js scene reported itself");
-              if (want && k.snapshot) {
-                const diff = diffSnapshots(want, k.snapshot, {
-                  geometry: mode === "original",
-                  ...(k.keyframe.id !== "t0" ? { ignoreTransforms: ignore } : {}),
-                });
-                differences.push(...diff.differences);
-              }
+              if (want && k.snapshot)
+                differences.push(...(compare(k.keyframe.id, k.snapshot)?.differences ?? []));
               let canvasDiff: number | null = null;
               let diffImage: string | null = null;
               const rect = v.keyframes.find((r) => r.id === k.keyframe.id)?.canvases[0];
@@ -225,6 +239,7 @@ export async function webglChecks(input: {
                 differences,
                 canvasDiff,
                 diffImage,
+                lagMs: k.lagMs,
               });
             },
           );

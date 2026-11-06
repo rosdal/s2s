@@ -426,7 +426,12 @@ async function run(
       written.set(next, undefined);
       continue;
     }
-    const relocated = relocateReferences(text, file, next, moves);
+    // Vite injects its own `__vitePreload` into modules with a dynamic `import()`; the site's
+    // recovered copy of that helper must not collide with it.
+    const relocated = relocateReferences(text, file, next, moves).replace(
+      /(?<![\w$])__vitePreload(?![\w$])/g,
+      "__recoveredVitePreload",
+    );
     notes += relocated.match(/\/\/ s2s:/g)?.length ?? 0;
     if (/\.(?:m?jsx?|cjs)$/.test(next)) {
       for (const m of relocated.matchAll(/(?<![\w$.])require\s*\(\s*["']([^"'./][^"']*)["']\s*\)/g))

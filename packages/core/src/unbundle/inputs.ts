@@ -136,7 +136,7 @@ export async function loadInputs(ctx: DetectContext): Promise<Inputs> {
       origin,
       pages: asset.pages,
       bundler: detectChunkBundler(raw),
-      vendor: spans.sort((a, b) => a.start - b.start),
+      vendor: healSpans(spans.sort((a, b) => a.start - b.start)),
       boundaries: sourceSpans,
       bodyOffset: (index) => rawBytes.of(toOld(index)),
     });
@@ -188,4 +188,34 @@ export function chunkName(url: string, taken: Set<string>): string {
   for (let n = 2; taken.has(candidate.toLowerCase()); n++) candidate = `${name}-${n}`;
   taken.add(candidate.toLowerCase());
   return candidate;
+}
+
+/** A foreign match this small inside one package's code is a function the two share. */
+const STRAY_SPAN_BYTES = 512;
+/** The widest gap between two ranges of one package that a stray match may sit in. */
+const STRAY_GAP_BYTES = 4096;
+
+/**
+ * A tiny match of another package between two close ranges of one package (91 bytes of "gsap"
+ * between two stretches of three's TSL) is a helper both happen to share. It splits the package's
+ * code, so the declarations around it stay behind as site code: drop it and close the gap.
+ */
+export function healSpans(spans: VendorSpan[]): VendorSpan[] {
+  const out = [...spans];
+  for (let i = 1; i + 1 < out.length; i++) {
+    const [prev, mid, next] = [out[i - 1], out[i], out[i + 1]] as [
+      VendorSpan,
+      VendorSpan,
+      VendorSpan,
+    ];
+    if (
+      mid.package !== prev.package &&
+      prev.package === next.package &&
+      mid.end - mid.start <= STRAY_SPAN_BYTES &&
+      next.start - prev.end <= STRAY_GAP_BYTES
+    ) {
+      out.splice(i, 1, { ...prev, start: prev.end, end: next.start });
+    }
+  }
+  return out;
 }

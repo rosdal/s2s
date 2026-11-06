@@ -2,6 +2,15 @@ import { end, type NodePath, start, type TextEdit } from "./ast.js";
 import type { ImportLine, VendorSpan } from "./types.js";
 
 /** `react-dom` → `__vendor_react_dom`; the name a vendor namespace import binds. */
+/**
+ * What `require("pkg")` returns, read through a namespace import of it: `module.exports`, which
+ * the bundler offers as `default` (seedrandom is a function with `.alea` on it), unless the module
+ * is an ES module compiled to CommonJS, whose exports the namespace already is.
+ */
+export function cjsValue(ns: string): string {
+  return `(${ns}[${ns}.__esModule ? "" : "default"] ?? ${ns})`;
+}
+
 export function vendorNamespace(pkg: string): string {
   return `__vendor_${pkg.replace(/^@/, "").replace(/[^A-Za-z0-9_$]/g, "_")}`;
 }
@@ -105,7 +114,7 @@ export function wrapperEdits(
     if (!fn || !call?.isCallExpression() || !call.node.arguments.includes(fn.node as never))
       continue;
     const name = vendorNamespace(span.package);
-    edits.push({ start: start(call.node), end: end(call.node), text: `() => ${name}` });
+    edits.push({ start: start(call.node), end: end(call.node), text: `() => ${cjsValue(name)}` });
     // `t()` calls of the getter read the package directly.
     const declarator = call.parentPath;
     if (declarator?.isVariableDeclarator() && declarator.node.id.type === "Identifier") {

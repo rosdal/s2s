@@ -191,15 +191,23 @@ export async function threeScaffold(ctx: ScaffoldHookContext): Promise<void> {
     await writeFileAtomic(configFile, config);
   }
 
-  // 3D files Vite does not treat as assets on its own, so imports of them build.
+  // 3D files Vite does not treat as assets on its own, so imports of them build; and imports of
+  // names three no longer exports (`GammaEncoding` in three-stdlib code), which the site's own
+  // bundler let through as `undefined`, stay `undefined` instead of failing the build.
   {
     const configFile = path.join(paths.project, "vite.config.ts");
-    const config = await readFile(configFile, "utf8");
+    let config = await readFile(configFile, "utf8");
     if (!config.includes("assetsInclude"))
-      await writeFileAtomic(
-        configFile,
-        config.replace(/(\n\s*build: )/, `\n  assetsInclude: ${JSON.stringify(EXTRA_ASSETS)},$1`),
+      config = config.replace(
+        /(\n\s*build: )/,
+        `\n  assetsInclude: ${JSON.stringify(EXTRA_ASSETS)},$1`,
       );
+    if (!config.includes("shimMissingExports"))
+      config = config.replace(
+        /build: \{ outDir: "dist", emptyOutDir: true \}/,
+        'build: { outDir: "dist", emptyOutDir: true, rolldownOptions: { shimMissingExports: true } }',
+      );
+    await writeFileAtomic(configFile, config);
   }
 
   // 3. Layout folders, each saying what moves there, and the captured graph.

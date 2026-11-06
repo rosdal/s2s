@@ -426,11 +426,11 @@ async function run(
       written.set(next, undefined);
       continue;
     }
-    // Vite injects its own `__vitePreload` into modules with a dynamic `import()`; the site's
-    // recovered copy of that helper must not collide with it.
+    // Vite injects its own `__vitePreload` and `__vite__mapDeps` into modules with a dynamic
+    // `import()`; the site's recovered copies of those helpers must not collide with them.
     const relocated = relocateReferences(text, file, next, moves).replace(
-      /(?<![\w$])__vitePreload(?![\w$])/g,
-      "__recoveredVitePreload",
+      /(?<![\w$])(__vitePreload|__vite__mapDeps)(?![\w$])/g,
+      (_, name: string) => `__recovered${name.replace(/^__vite_?_?/, "Vite_")}`,
     );
     notes += relocated.match(/\/\/ s2s:/g)?.length ?? 0;
     if (/\.(?:m?jsx?|cjs)$/.test(next)) {

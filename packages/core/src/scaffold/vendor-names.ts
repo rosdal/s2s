@@ -306,6 +306,9 @@ export class PackageReader {
     if (exp && typeof exp === "object" && !isConditions(exp)) {
       for (const [key, value] of Object.entries(exp as Record<string, unknown>)) {
         if (key === "." || !key.startsWith("./")) continue;
+        // Raw source files (`three/src/*`) are a second copy of what the entry bundles; importing
+        // from them would load the library twice.
+        if (/^\.\/src(?:\/|$)/.test(String(pickTarget(value) ?? ""))) continue;
         const target = pickTarget(value);
         if (!target) continue;
         if (key.split("*").length === 2 && target.split("*").length === 2) {

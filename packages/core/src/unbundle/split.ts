@@ -106,13 +106,44 @@ export function keepWritten(units: Unit[]): void {
       if (unit.dropped) continue;
       for (const target of [...unit.writes, ...unit.mutates]) {
         const owner = units[target];
+        if (!owner?.dropped) continue;
         // An exported statement is reached from other chunks through the vendor import instead.
-        if (owner?.dropped && owner.exported.length === 0) {
+        if (owner.exported.length === 0) {
           owner.dropped = null;
           changed = true;
+        } else if (
+          unit.node.type === "ExpressionStatement" &&
+          unit.mutates.has(target) &&
+          unit.exported.length === 0
+        ) {
+          // `useGLTF.clear = …` on an exported library function: the library's own code.
+          unit.dropped = { ...owner.dropped };
+          changed = true;
+          break;
         }
       }
     }
+  }
+}
+
+/** Exported functions this small are the bundler's runtime (`__commonJSMin`, `__toESM`). */
+const RUNTIME_HELPER_BYTES = 700;
+
+/**
+ * The bundler's own runtime helpers, exported for other chunks, sit inside a library's range when
+ * the library is first in the chunk. They are no package's export, so they stay.
+ */
+export function keepRuntimeHelpers(units: Unit[], code: string): void {
+  for (const unit of units) {
+    if (!unit.dropped || unit.exported.length === 0 || unit.bytes > RUNTIME_HELPER_BYTES) continue;
+    const text = declarationText(unit.node, code) ?? "";
+    const fn = /^(?:\([\w$,\s]*\)|[\w$]+)\s*=>|^function\b/.test(text);
+    if (
+      fn &&
+      (helperKind(text) ||
+        /Object\.(?:defineProperty|create|getOwnPropertyNames)|__esModule/.test(text))
+    )
+      unit.dropped = null;
   }
 }
 
@@ -194,7 +225,11 @@ export function splitScope(
       functions.push(path);
     },
   });
-  const empty = { drafts: [], table: { entry: null, exports: new Map() }, inlined: [] };
+  const empty = {
+    drafts: [],
+    table: { entry: null, exports: new Map(), vendor: new Map() },
+    inlined: [],
+  };
   if (!programPath) return empty;
   container = programPath;
   // A whole-file IIFE (esbuild's `(() => {…})()`, webpack-free scripts) holds the real top level.
@@ -452,7 +487,7 @@ export function splitScope(
         // `var r = new class extends …{…}(opts)`: a library class the minifier inlined into the
         // site's one `new`. The site's statement stays; the class becomes an import, named after
         // install (analysis/vendor-inline.json).
-        const name = `${vendorNamespace(span.package)}$inline${inlined.length + 1}`;
+        const name = `__inline${vendorNamespace(span.package).slice("__vendor".length)}_${inlined.length + 1}`;
         unit.edits.push({ start: inline.start, end: inline.end, text: name });
         vendorImports.set(unit.index, [
           ...(vendorImports.get(unit.index) ?? []),
@@ -465,6 +500,7 @@ export function splitScope(
     }
     absorbWedged(units);
     keepWritten(units);
+    keepRuntimeHelpers(units, code);
     for (let changed = true; changed; ) {
       changed = false;
       for (const unit of units) {
@@ -667,11 +703,40 @@ export function splitScope(
   for (const [part, pairs] of exportedLocals)
     for (const [exported, local] of pairs)
       chunkExports.set(exported, { key: keyOf(find(part)), local });
+  // Exports whose statement was dropped as library code: other chunks import them from the
+  // package instead, and the declaration's text lets the scaffold name them after install.
+  const vendorExports: ChunkTable["vendor"] = new Map();
+  for (const unit of units) {
+    if (!unit.dropped?.package) continue;
+    const text = declarationText(unit.node, code);
+    for (const [exported] of unit.exported)
+      if (!chunkExports.has(exported))
+        vendorExports.set(exported, {
+          package: unit.dropped.package,
+          version: unit.dropped.version,
+          ...(text ? { text } : {}),
+        });
+  }
   return {
     drafts,
-    table: { entry: entryPart === undefined ? null : keyOf(entryPart), exports: chunkExports },
+    table: {
+      entry: entryPart === undefined ? null : keyOf(entryPart),
+      exports: chunkExports,
+      vendor: vendorExports,
+    },
     inlined,
   };
+}
+
+/** A declaration's value as expression text: a declarator's init, or a function or class. */
+function declarationText(node: t.Statement, code: string): string | undefined {
+  if (node.type === "VariableDeclaration") {
+    const init = node.declarations.length === 1 ? node.declarations[0]?.init : undefined;
+    return init ? code.slice(start(init), end(init)) : undefined;
+  }
+  if (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration")
+    return code.slice(start(node), end(node));
+  return undefined;
 }
 
 /** A library class or function a minifier inlined into a site statement, replaced by an import. */
@@ -731,6 +796,8 @@ export function resolveUrl(spec: string, base: string): string | undefined {
 export interface ChunkTable {
   entry: string | null;
   exports: Map<string, { key: string; local: string }>;
+  /** Exports dropped as library code, by exported name. */
+  vendor?: Map<string, { package: string; version: string | null; text?: string }>;
 }
 
 interface Assignment {

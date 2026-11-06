@@ -19,7 +19,7 @@ import { fixDefaultImports } from "./interop.js";
 import { PASSES, type PassName, type PassResult, transform } from "./passes.js";
 import { type ChunkTable, type InlinedVendor, splitScope } from "./split.js";
 import type { ChunkInput, Draft, ImportLine, UnpackContext } from "./types.js";
-import { vendorNamespaceLines } from "./vendor.js";
+import { vendorNamespace, vendorNamespaceLines } from "./vendor.js";
 import { unpackWebpack } from "./webpack.js";
 
 export interface UnbundleOptions {
@@ -443,7 +443,7 @@ async function run(
   for (const p of placed) {
     signal?.throwIfAborted();
     await breathe();
-    const resolved = renderModule(p, byKey, fileOf, tables, warn);
+    const resolved = renderModule(p, byKey, fileOf, tables, warn, inlinedVendor);
     const result = await transform(resolved, adapter, skip);
     let code = result.code;
     if (!parses(code)) {
@@ -665,6 +665,7 @@ function renderModule(
   fileOf: Map<string, string>,
   tables: Map<string, ChunkTable>,
   warn: (m: string) => void,
+  inlined: InlinedVendor[] = [],
 ): string {
   const notes = [...p.draft.notes];
   const toSpec = (key: string | null | undefined): string | undefined => {
@@ -696,10 +697,38 @@ function renderModule(
   };
   for (const line of p.draft.head) {
     if (line.note) notes.push(line.note);
+    // An export of another chunk that was dropped as library code: import it from the package.
+    if (line.target.kind === "chunk-export" && line.names.length > 0) {
+      const table = tables.get(line.target.url);
+      const vendor =
+        table && !table.exports.has(line.target.name)
+          ? table.vendor?.get(line.target.name)
+          : undefined;
+      if (vendor) {
+        // `import * as ns` plus `const x = ns`: calling a namespace directly doesn't build.
+        const ns = `${vendorNamespace(vendor.package)}$chunk`;
+        for (const text of vendorNamespaceLines(ns, vendor.package, vendor.version)) add(text);
+        for (const n of line.names) {
+          add(`const ${n.local} = ${ns};`);
+          if (vendor.text)
+            inlined.push({ name: n.local, package: vendor.package, text: vendor.text });
+        }
+        notes.push(
+          `${line.names.map((n) => n.local).join(", ")} came from ${vendor.package}'s code inlined in another chunk; import what it stands for instead`,
+        );
+        continue;
+      }
+    }
     const spec = specOf(line, p, toSpec, tables, missing);
     if (!spec) continue;
     if (line.namespace) {
-      if (line.target.kind === "package")
+      if (line.target.kind === "package" && !line.namespace.startsWith("__vendor_")) {
+        // A binding of inlined library code: an alias of the package's namespace, since the code
+        // may call it and calling a namespace import doesn't build. The scaffold names it later.
+        const ns = vendorNamespace(spec.from);
+        for (const text of vendorNamespaceLines(ns, spec.from, line.version)) add(text);
+        add(`const ${line.namespace} = ${ns};`);
+      } else if (line.target.kind === "package")
         for (const text of vendorNamespaceLines(line.namespace, spec.from, line.version)) add(text);
       else add(`import * as ${line.namespace} from ${quote(spec.from)};`);
     }

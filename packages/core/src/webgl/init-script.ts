@@ -200,9 +200,24 @@ function INIT(cfg: { seed: number | null; full: boolean }): void {
           (this.path ? new URL(this.path, location.href) : location.href) as Any,
         ).href;
       } catch {}
+      // A load is decoding too: hold the clock until it calls back, so the scene it adds (and an
+      // animation it starts) lands on the same step on a busy machine as on an idle one.
+      let open = cfg.full;
+      if (open) pending++;
+      const finish = () => {
+        if (open) pending = Math.max(0, pending - 1);
+        open = false;
+      };
+      const [onProgress, onError, ...more] = rest;
+      const failed = (error: Any) => {
+        finish();
+        if (typeof onError === "function") return onError(error);
+        console.error(error);
+      };
       const wrapped =
         typeof onLoad === "function"
           ? (result: Any) => {
+              finish();
               try {
                 const target = result?.scene ?? result;
                 if (target && typeof target === "object") state.urls.set(target, abs);
@@ -210,8 +225,11 @@ function INIT(cfg: { seed: number | null; full: boolean }): void {
               } catch {}
               return onLoad(result);
             }
-          : onLoad;
-      const out = load.call(this, url, wrapped, ...rest);
+          : (result: Any) => {
+              finish();
+              return result;
+            };
+      const out = load.call(this, url, wrapped, onProgress, failed, ...more);
       try {
         if (out && typeof out === "object" && out.isTexture) state.urls.set(out, abs);
       } catch {}

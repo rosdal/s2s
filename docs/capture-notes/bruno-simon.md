@@ -12,7 +12,7 @@ Nov 6, 2026 · `s2s grab https://bruno-simon.com/ --viewports desktop` (source: 
 **What was missed**
 
 - The untouched build took several Stage 4 fixes: the recovered copies of Vite's `__vitePreload` and `__vite__mapDeps` collided with the ones Vite injects, KTX2Loader code wrote module state that had become an import (`_zstd ||= …`), and Rolldown's runtime helpers were exported from a chunk that had been dropped as library code.
-- At runtime the rebuilt page throws `process is not defined`: a bundled Node dependency (`util`) expects Node globals. Until it is fixed, verify finds no scene at any keyframe. Recovered code also calls `require("fs")` and `require("path")`; scaffold flags both for the agent.
+- A bundled Node dependency (`util`) expects the `process` global the site's bundler provided; the scaffold now defines the same browser shim in `index.html`. Past that, the rebuilt page throws `ConvertType$1 is not a constructor`, a three TSL internal the post-install naming couldn't resolve. Until it is fixed, verify finds no scene at any keyframe. Recovered code also calls `require("fs")` and `require("path")`; scaffold flags both for the agent.
 - Shaders: three's `ShaderChunk` wasn't found (the WebGPU build ships TSL node code instead), so programs were written unfolded; WGSL and TSL are out of scope.
 - The network never went quiet during the deterministic pass (sound streams), so keyframes may not repeat exactly.
 - The site is driven by keyboard and pointer (a car you steer); the walk covers time steps only, as the page doesn't scroll.

@@ -622,7 +622,18 @@ async function run(
       entry: "/src/main.ts",
     });
     removedFromHtml = built.removed;
-    await writeFileAtomic(path.join(paths.project, "index.html"), built.html);
+    // The site bundled the browser `process` polyfill, as webpack 4 and browserify did on their
+    // own; installed packages (`util`) now read the global, so define it before the app runs.
+    const polyfilled = [...written.values()].some((t) =>
+      /process\.title\s*=\s*["'`]browser["'`]/.test(t ?? ""),
+    );
+    const html = polyfilled
+      ? built.html.replace(
+          /<head([^>]*)>/i,
+          `<head$1>\n    <script>/* s2s: the browser process shim the site's bundler provided */ window.process ??= { env: {}, browser: true, version: "", versions: {}, argv: [], nextTick: (f, ...a) => queueMicrotask(() => f(...a)) };</script>`,
+        )
+      : built.html;
+    await writeFileAtomic(path.join(paths.project, "index.html"), html);
   } else {
     warn("No page snapshot was captured; index.html is a blank page.");
     await writeFileAtomic(

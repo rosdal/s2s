@@ -1,5 +1,15 @@
 # @rosdal/s2s
 
+## 0.3.0
+
+### Minor Changes
+
+- 22f3f7d: Recover three.js sites. Capture records scene snapshots, screenshots and shaders at frozen keyframes; the scaffold writes models, textures and sounds as proxies (`--assets proxy`, the default), simplified clones or the originals, with an `ASSETS.md` swap guide and shaders as `.glsl` files; verify compares the rebuilt scene graph at every keyframe. Library code a bundle inlined is now named after install, so the untouched scaffold of a scope-hoisted bundle runs.
+
+### Patch Changes
+
+- 0258325: Show a real `s2s grab` run against excalidraw.com in the README and link the new project page.
+
 ## 0.2.1
 
 ### Patch Changes

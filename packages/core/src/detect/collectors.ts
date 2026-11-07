@@ -256,6 +256,10 @@ export async function collectRuntime(ctx: DetectContext): Promise<EvidenceInput[
       if (isExact(version as string))
         push(entry, name, version as string, probe.strength, `${key}.version`);
     }
+    // three's `window.__THREE__` is its REVISION ("139"), the minor of the npm version.
+    const revision = field(frameworks.three, "revision");
+    if (typeof revision === "string" && /^\d{2,3}$/.test(revision))
+      push(entry, "three", `0.${revision}.x`, "exact", "window.__THREE__");
     const renderers = frameworks.reactDevtoolsRenderers;
     if (Array.isArray(renderers)) {
       for (const renderer of renderers) {

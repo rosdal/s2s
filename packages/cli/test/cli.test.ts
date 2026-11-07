@@ -68,6 +68,23 @@ describe("s2s", () => {
     expect(code).toBe(1);
     expect(err.join("\n")).toContain("--viewports");
   });
+
+  test("bad WebGL flag values are usage errors", async () => {
+    const keyframes = io();
+    expect(
+      await runCli(["capture", server.url, "--keyframes", "t0,x9"], "0.0.0", keyframes.cliIO),
+    ).toBe(1);
+    expect(keyframes.err.join("\n")).toContain("--keyframes");
+    for (const args of [
+      ["--assets", "lowpoly"],
+      ["--clone-ratio", "2"],
+      ["--clone-texture", "3"],
+    ]) {
+      const { cliIO, err } = io();
+      expect(await runCli(["scaffold", tmp, ...args], "0.0.0", cliIO)).toBe(2);
+      expect(err.join("\n")).toContain(args[0]);
+    }
+  });
 });
 
 describe("s2s capture", () => {
@@ -100,7 +117,7 @@ describe("s2s capture", () => {
     expect(text).toMatch(/^\s+load\s+desktop index\s+requests \d+/m);
     expect(text).toMatch(/^\s+interact\s+desktop index/m);
     expect(text).toMatch(
-      /^✓ capture\s+\d+ requests? · .+ · desktop · \d+ maps? found {2}\d+\.\ds$/m,
+      /^✓ capture\s+\d+ requests? · .+ · desktop · \d+ maps? found {2}\d+(?:\.\d)?s$/m,
     );
   });
 

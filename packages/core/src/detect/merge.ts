@@ -62,6 +62,8 @@ export interface MergedPackage {
 export const IMPLIES: Record<string, string[]> = {
   "react-dom": ["react"],
   next: ["react", "react-dom"],
+  // drei is built on fiber and needs it installed beside it.
+  "@react-three/drei": ["@react-three/fiber"],
 };
 
 /** Packages released in lockstep, so the implier's version is the implied one's too. */

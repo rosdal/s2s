@@ -1,0 +1,16 @@
+{
+  "name": "@s2s-fixtures/three-skinned",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node gen-assets.mjs && vite build"
+  },
+  "dependencies": {
+    "three": "0.187.0"
+  },
+  "devDependencies": {
+    "@gltf-transform/core": "4.5.1",
+    "pngjs": "^7.0.0",
+    "vite": "^8.3.5"
+  }
+}

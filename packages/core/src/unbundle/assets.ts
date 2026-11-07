@@ -95,7 +95,11 @@ export function assetIndex(
     if (!spec || spec.startsWith("data:") || (/^[a-z]+:/i.test(spec) && !/^https?:/i.test(spec)))
       return undefined;
     try {
-      return byUrl.get(strip(new URL(spec, base).href));
+      // A loader resolves `textures/mask.svg` against the page, not the script that names it.
+      return (
+        byUrl.get(strip(new URL(spec, base).href)) ??
+        (/^[./]/.test(spec) ? undefined : byUrl.get(strip(new URL(spec, new URL("/", base)).href)))
+      );
     } catch {
       return undefined;
     }

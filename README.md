@@ -88,9 +88,24 @@ The agent moves code out of `project/src/_recovered/` one group at a time, runs 
 
 Exit codes are 0 for pass, 1 for a regression (details in `verify/report.md`), 2 for a failed build and 3 when verify itself could not run. Thresholds live in the workspace's `s2s.config.ts`.
 
+## three.js and WebGL
+
+On a three.js site (vanilla or React Three Fiber), capture also records the scene. It loads each page again on a frozen clock, with seeded randomness and software rendering, and walks a set of keyframes: 0, 1 and 3 seconds at the top, then one per viewport height of scroll (`--keyframes` and `--max-keyframes` change the set). At each keyframe it saves a screenshot and a snapshot of the scene graph (hierarchy, names, transforms, cameras, lights, materials, textures), plus the final GLSL of every shader program. Two captures of the same site give the same files.
+
+The scaffold keeps the structure and lets you choose what happens to the art with `--assets`:
+
+| Mode              | Models, textures and sounds in `project/`                                                                                      | Verify compares                        |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------- |
+| `proxy` (default) | Generated stand-ins: boxes, spheres and cylinders with the original names, bounds and animations; flat materials; silent audio | Scene snapshots at every keyframe      |
+| `clone`           | The originals simplified (`--clone-ratio`, default 0.25), textures downscaled (`--clone-texture`, default 512 px)              | Snapshots, and canvas pixels within 8% |
+| `original`        | The captured files, unchanged                                                                                                  | Snapshots, and canvas pixels within 3% |
+
+Only `proxy` leaves the site's art out of the project, and it checks that no original file ended up there. `clone` and `original` are for local study only, and every file s2s writes in those modes says so. Custom shaders come back as `.glsl` files imported with `?raw`, with three's built-in chunks folded back to `#include` lines. `ASSETS.md` lists each asset with the scene nodes and code that use it and what a replacement has to keep.
+
 ## Limits
 
 - Next.js, Nuxt, Astro and SvelteKit sites become a Vite single-page app built from the hydrated DOM, not a project in their framework.
+- WebGPU (three's `WebGPURenderer`, TSL, WGSL), Babylon.js and PlayCanvas are detected and reported, not recovered.
 - Only what a visitor's browser receives can be recovered: no server code, comments, tests or history.
 - Without source maps, names and module boundaries are guesses. The agent improves them; it cannot know the originals.
 - Pages behind interactions the capture didn't trigger are missing, and verify blocks any request the capture has no response for.

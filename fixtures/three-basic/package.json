@@ -1,0 +1,17 @@
+{
+  "name": "@s2s-fixtures/three-basic",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node gen-assets.mjs && vite build"
+  },
+  "dependencies": {
+    "gsap": "3.13.0",
+    "three": "0.187.0"
+  },
+  "devDependencies": {
+    "@gltf-transform/core": "4.5.1",
+    "pngjs": "^7.0.0",
+    "vite": "^8.3.5"
+  }
+}

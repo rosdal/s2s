@@ -1,0 +1,12 @@
+{
+  "package": "@dimforge/rapier3d-compat",
+  "patterns": [
+    {
+      "id": "wasm-bindings",
+      "regex": "{q}\\./rapier_wasm3d_bg\\.js{q}",
+      "anchors": ["rawintegrationparameters"],
+      "window": 400000,
+      "maxMatches": 1
+    }
+  ]
+}

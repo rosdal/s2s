@@ -12,6 +12,7 @@ import {
 } from "../detect/project.js";
 import { writeFileAtomic, writeJsonAtomic } from "../fs-util.js";
 import { WorkspaceError } from "../maps/run.js";
+import { readFramework, recovererByName } from "../recoverers/registry.js";
 import type { ModulesFile } from "../unbundle/graph.js";
 import { packageName } from "../unbundle/graph.js";
 import { loadThresholds } from "../verify/config.js";
@@ -45,6 +46,7 @@ import {
   viteConfig,
   WORKSPACE_GITIGNORE,
 } from "./templates.js";
+import { resolveVendorNames } from "./vendor-names.js";
 import { findWorkspacePackages, workspaceEntry } from "./workspaces.js";
 
 export interface ScaffoldOptions {
@@ -59,6 +61,8 @@ export interface ScaffoldOptions {
   build?: boolean;
   /** `git init` and commit `s2s scaffold`. Defaults to true. */
   git?: boolean;
+  /** Options for the chosen recoverer's scaffold hook, such as `{ assets: "proxy" }` for three. */
+  recoverer?: Record<string, unknown>;
   signal?: AbortSignal;
   onProgress?: (event: ScaffoldProgress) => void;
 }
@@ -164,18 +168,26 @@ export async function scaffold(options: ScaffoldOptions): Promise<ScaffoldResult
       `Unbundle in ${root} is ${manifest.stages.unbundle.status}. Run "s2s unbundle" before "s2s scaffold".`,
     );
   const previous = manifest.stages.scaffold;
-  const sameTarget = !options.target || previous.details?.target === options.target;
+  const sameTarget =
+    (!options.target || previous.details?.target === options.target) &&
+    Object.entries(options.recoverer ?? {}).every(
+      ([k, v]) => v === undefined || previous.details?.[k] === v,
+    );
   if (previous.status === "complete" && !options.force && sameTarget) {
     progress({ kind: "skip", workspace: root, reason: "scaffold is already complete" });
     const target = String(previous.details?.target ?? "vanilla");
     const build = String(previous.details?.build ?? "skipped");
+    const webglSummary = previous.details?.webglSummary;
     return {
       workspace: root,
       status: "complete",
       skipped: true,
       stats: previous.stats,
       warnings: previous.warnings,
-      summary: summaryLine(target, previous.stats, build),
+      summary:
+        typeof webglSummary === "string"
+          ? `${webglSummary} · build ${build}`
+          : summaryLine(target, previous.stats, build),
       target: target as Target,
       build,
     };
@@ -226,6 +238,8 @@ export async function scaffold(options: ScaffoldOptions): Promise<ScaffoldResult
             install: outcome.install,
             build: outcome.build,
             lockfile: outcome.lockfile,
+            recoverer: outcome.recoverer,
+            ...outcome.recovererDetails,
           },
         }
       : {}),
@@ -235,7 +249,11 @@ export async function scaffold(options: ScaffoldOptions): Promise<ScaffoldResult
   // The manifest changed after the commit; fold it in so the tree starts clean.
   if (outcome?.committed)
     await git(["commit", "-q", "--amend", "--no-edit", "-a"], root, outcome.fallbackIdentity);
-  const summary = summaryLine(outcome?.target ?? "unknown", stats, outcome?.build ?? "skipped");
+  const webglSummary = outcome?.recovererDetails.webglSummary;
+  const summary =
+    typeof webglSummary === "string"
+      ? `${webglSummary} · build ${outcome?.build ?? "skipped"}`
+      : summaryLine(outcome?.target ?? "unknown", stats, outcome?.build ?? "skipped");
   progress({ kind: "done", status, summary });
   return {
     workspace: root,
@@ -260,6 +278,8 @@ interface Outcome {
   lockfile: string | null;
   committed: boolean;
   fallbackIdentity: boolean;
+  recoverer: string;
+  recovererDetails: Record<string, string | number | boolean | null>;
 }
 
 async function readJson<T>(file: string): Promise<T | undefined> {
@@ -284,7 +304,9 @@ async function listFiles(dir: string): Promise<string[]> {
 /** The project path a workspace file moves to (both workspace-relative, posix). */
 function projectPath(file: string, jsx: boolean): string {
   let rel: string;
-  if (file.startsWith("recovered/unbundled/"))
+  if (file.startsWith("recovered/unbundled/shaders/") && /\.glsl$/i.test(file))
+    rel = `project/src/shaders/${file.slice("recovered/unbundled/shaders/".length)}`;
+  else if (file.startsWith("recovered/unbundled/"))
     rel = `project/src/_recovered/${file.slice("recovered/unbundled/".length)}`;
   else if (file.startsWith("recovered/sourcemap/"))
     rel = `project/src/_recovered/_sourcemap/${file.slice("recovered/sourcemap/".length)}`;
@@ -376,6 +398,9 @@ async function run(
   }
   for (const file of await listFiles(paths.assets))
     sources.push(posix(path.relative(paths.root, file)));
+  // GLSL a recoverer pulled out of string literals; the modules import them with `?raw`.
+  for (const file of await listFiles(path.join(paths.unbundled, "shaders")))
+    if (/\.glsl$/i.test(file)) sources.push(posix(path.relative(paths.root, file)));
   const texts = new Map<string, string>();
   const moves = new Map<string, string>();
   for (const file of sources) {
@@ -401,7 +426,12 @@ async function run(
       written.set(next, undefined);
       continue;
     }
-    const relocated = relocateReferences(text, file, next, moves);
+    // Vite injects its own `__vitePreload` and `__vite__mapDeps` into modules with a dynamic
+    // `import()`; the site's recovered copies of those helpers must not collide with them.
+    const relocated = relocateReferences(text, file, next, moves).replace(
+      /(?<![\w$])(__vitePreload|__vite__mapDeps)(?![\w$])/g,
+      (_, name: string) => `__recovered${name.replace(/^__vite_?_?/, "Vite_")}`,
+    );
     notes += relocated.match(/\/\/ s2s:/g)?.length ?? 0;
     if (/\.(?:m?jsx?|cjs)$/.test(next)) {
       for (const m of relocated.matchAll(/(?<![\w$.])require\s*\(\s*["']([^"'./][^"']*)["']\s*\)/g))
@@ -592,7 +622,25 @@ async function run(
       entry: "/src/main.ts",
     });
     removedFromHtml = built.removed;
-    await writeFileAtomic(path.join(paths.project, "index.html"), built.html);
+    // The site bundled the browser `process` polyfill, as webpack 4 and browserify did on their
+    // own; installed packages (`util`) now read the global, so define it before the app runs.
+    // The polyfill itself may have been dropped as library code: look in the captured bundles too.
+    const marker = /process\.title\s*=\s*["'`]browser["'`]/;
+    let polyfilled = [...written.values()].some((t) => marker.test(t ?? ""));
+    for (const hash of polyfilled ? [] : new Set(bodyOf.values())) {
+      const body = await readFile(path.join(paths.bodies, hash), "utf8").catch(() => "");
+      if (marker.test(body)) {
+        polyfilled = true;
+        break;
+      }
+    }
+    const html = polyfilled
+      ? built.html.replace(
+          /<head([^>]*)>/i,
+          `<head$1>\n    <script>/* s2s: the browser process shim the site's bundler provided */ window.process ??= { env: {}, browser: true, version: "", versions: {}, argv: [], nextTick: (f, ...a) => queueMicrotask(() => f(...a)) };</script>`,
+        )
+      : built.html;
+    await writeFileAtomic(path.join(paths.project, "index.html"), html);
   } else {
     warn("No page snapshot was captured; index.html is a blank page.");
     await writeFileAtomic(
@@ -610,6 +658,23 @@ async function run(
     await writeFileAtomic(path.join(paths.project, ".npmrc"), "legacy-peer-deps=true\n");
   addMissingImports(pkg, graph, packagesFile, warn, new Set(aliases.map((a) => a.name)));
   await writeJsonAtomic(paths.packageJson, scaffoldPackageJson(pkg, target));
+
+  // 5b. The recoverer's own files (three: assets, shaders, layout), before install and build.
+  const framework = await readFramework(paths);
+  const recoverer = recovererByName(framework.recoverer);
+  const recovererStats: Record<string, number> = {};
+  const recovererDetails: Record<string, string | number | boolean | null> = {};
+  if (recoverer.scaffold) {
+    signal?.throwIfAborted();
+    await recoverer.scaffold({
+      paths,
+      framework,
+      options: options.recoverer ?? {},
+      warn,
+      stats: recovererStats,
+      details: recovererDetails,
+    });
+  }
 
   // 6. Agent files and the analysis record of where everything went.
   const files = graph.modules.map((m) => ({
@@ -647,6 +712,8 @@ async function run(
     moves,
     notes,
   });
+  const notesLines = recoverer.agentNotes?.(framework) ?? [];
+  if (notesLines.length > 0) facts.framework = { name: framework.recoverer, lines: notesLines };
   await writeAgentFiles(paths, facts);
   await writeFileAtomic(paths.gitignore, WORKSPACE_GITIGNORE);
 
@@ -668,6 +735,37 @@ async function run(
     await writeFileAtomic(path.join(paths.analysis, "scaffold-install.log"), result.output);
     if (result.exitCode !== 0)
       warn(`${pm} install exited with ${result.exitCode}; see analysis/scaffold-install.log.`);
+  }
+  // With the packages installed, name what the recovered code used of each inlined library.
+  let namedBindings = 0;
+  if (install === "passed") {
+    const files: { file: string; bundle: string }[] = [];
+    for (const m of report.modules) {
+      const moved = moves.get(m.file.toLowerCase());
+      const hash = bodyOf.get(m.chunk);
+      if (moved && hash)
+        files.push({ file: path.join(paths.root, moved), bundle: path.join(paths.bodies, hash) });
+    }
+    const unique = [...new Map(files.map((f) => [f.file, f])).values()];
+    const inline = (await readJson<{ inlined: { name: string; text: string; file?: string }[] }>(
+      path.join(paths.analysis, "vendor-inline.json"),
+    )) ?? { inlined: [] };
+    const urlOf = new Map([...bodyOf].map(([url, hash]) => [hash, url]));
+    const chunkOf = (bundle: string, spec: string) => {
+      const url = urlOf.get(path.basename(bundle));
+      if (!url) return undefined;
+      const hash = bodyOf.get(new URL(spec, url).href);
+      return hash ? path.join(paths.bodies, hash) : undefined;
+    };
+    const named = await resolveVendorNames(paths.project, unique, inline.inlined, chunkOf);
+    namedBindings = named.length;
+    await writeJsonAtomic(path.join(paths.analysis, "vendor-names.json"), {
+      named: named.map((n) => ({ ...n, file: posix(path.relative(paths.root, n.file)) })),
+    });
+    if (named.length > 0)
+      warn(
+        `Named ${named.filter((n) => n.package).length} binding(s) of inlined libraries after install (${[...new Set(named.flatMap((n) => (n.package ? [n.package] : [])))].join(", ")})${named.some((n) => !n.package) ? `, and copied ${named.filter((n) => !n.package).length} internal helper(s) from the bundle` : ""}; see analysis/vendor-names.json.`,
+      );
   }
   if (options.build !== false && install !== "failed") {
     signal?.throwIfAborted();
@@ -713,14 +811,18 @@ async function run(
     lockfile,
     committed,
     fallbackIdentity,
+    recoverer: framework.recoverer,
+    recovererDetails,
     ...(buildOutput ? { buildOutput } : {}),
     stats: {
+      ...recovererStats,
       modules: code.length,
       styles: graph.modules.length - code.length,
       assets: sources.filter((s) => s.startsWith("assets/")).length,
       groups: graph.groups.length,
       entryModules: mainModules.length,
       notes,
+      namedBindings,
     },
   };
 }

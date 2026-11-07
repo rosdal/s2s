@@ -66,6 +66,8 @@ export const RUNTIME_PROBE = `(() => {
     return chunks.length ? { chunkGlobals: chunks } : null;
   }));
   set("turbopack", safe(() => w.TURBOPACK || w.__TURBOPACK_PAGE_BOOTSTRAP ? {} : null));
+  set("three", safe(() => w.__THREE__ ? { revision: String(w.__THREE__) } : null));
+  set("webgl", safe(() => w.__s2sWebgl ? w.__s2sWebgl.summary() : null));
   set("vite", safe(() => document.querySelector("script[type=module][src*='/assets/index-'], link[rel=modulepreload]") ? {} : null));
 
   const dataAttributes = {};

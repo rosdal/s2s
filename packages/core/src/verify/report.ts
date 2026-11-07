@@ -6,8 +6,10 @@ const pct = (n: number | null) => (n === null ? "n/a" : `${(n * 100).toFixed(2)}
 export function renderReportMd(report: VerifyReport): string {
   const failed = report.checks.filter((c) => !c.pass);
   const t = report.thresholds;
+  const all = report.checks.length + (report.webgl?.length ?? 0);
+  const failing = failed.length + (report.webgl ?? []).filter((w) => !w.pass).length;
   const out: string[] = [
-    `# Verify: ${report.status === "pass" ? "PASS" : `FAIL (${failed.length} of ${report.checks.length} checks)`}`,
+    `# Verify: ${report.status === "pass" ? "PASS" : `FAIL (${failing} of ${all} checks)`}`,
     "",
     `Limits: pixels ≤ ${pct(t.maxPixelDiff)}, DOM ≥ ${t.minDomSimilarity}, new console errors ≤ ${t.maxNewConsoleErrors}, failed requests ≤ ${t.maxFailedRequests}.`,
   ];
@@ -27,6 +29,31 @@ export function renderReportMd(report: VerifyReport): string {
       "",
       "\\* The capture kept no DOM for this viewport (it predates per-viewport DOMs), so the DOM is compared with the primary viewport's and does not fail the check. Recapture to check it.",
     );
+  if (report.webgl && report.webgl.length > 0) {
+    out.push(
+      "",
+      "## WebGL scenes",
+      "",
+      "The keyframe walk replayed on the rebuilt site (frozen clock, seeded randomness, software rendering), with each scene snapshot compared to `raw/webgl/`: hierarchy and names exactly, positions within 1% of the scene, rotations within 1°, camera FOV exactly.",
+      "",
+      "| Page | Viewport | Assets | Keyframes | Canvas limit | Result |",
+      "| --- | --- | --- | --- | --- | --- |",
+      ...report.webgl.map(
+        (w) =>
+          `| ${w.page} | ${w.viewport} | ${w.mode} | ${w.keyframes.filter((k) => k.pass).length} of ${w.keyframes.length} match | ${w.canvasLimit === null ? "not compared" : pct(w.canvasLimit)} | ${w.pass ? "pass" : "FAIL"} |`,
+      ),
+    );
+    for (const w of report.webgl.filter((x) => !x.pass)) {
+      out.push("", `### ${w.page} · ${w.viewport} (WebGL)`, "");
+      for (const reason of w.reasons) out.push(`- ${reason}`);
+      for (const note of w.notes ?? []) out.push(`- Note: ${note}`);
+      for (const k of w.keyframes.filter((x) => !x.pass)) {
+        out.push(`- \`${k.keyframe}\`:`);
+        for (const d of k.differences.slice(0, 12)) out.push(`  - ${d}`);
+        if (k.diffImage) out.push(`  - Diff image: \`${k.diffImage}\``);
+      }
+    }
+  }
   for (const c of failed) {
     out.push("", `## ${c.page} · ${c.viewport}`, "");
     for (const reason of c.reasons) out.push(`- ${reason}`);

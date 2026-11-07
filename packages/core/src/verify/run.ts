@@ -12,13 +12,16 @@ import { readRequestLog } from "../capture/request-log.js";
 import { type WorkspacePaths, workspacePaths } from "../capture/workspace.js";
 import { PACKAGE_MANAGERS, type PackageManager } from "../detect/project.js";
 import { writeFileAtomic, writeJsonAtomic } from "../fs-util.js";
+import { readFramework, recovererByName } from "../recoverers/registry.js";
 import { buildFailureExcerpt, runScript } from "../scaffold/exec.js";
 import type { Thresholds } from "../scaffold/facts.js";
+import { type WebglCheck, webglChecks } from "../webgl/verify.js";
 import { loadThresholds } from "./config.js";
 import { DOM_SIMILARITY, type DomResult } from "./dom.js";
 import { comparePixels, decodePng, encodePng, type Rect } from "./image.js";
 import { ReplayIndex } from "./replay.js";
 import { renderReportMd } from "./report.js";
+import { canvasRects, installReplay } from "./routes.js";
 
 export interface VerifyOptions {
   workspace: string;
@@ -80,6 +83,8 @@ export interface VerifyReport {
   thresholds: Thresholds;
   baselineUpdated: boolean;
   checks: PageCheck[];
+  /** Scene-snapshot checks at the captured keyframes, for WebGL sites. */
+  webgl?: WebglCheck[];
   sinceLastPass: {
     at: string;
     changes: {
@@ -139,8 +144,9 @@ const CONTENT_TYPES: Record<string, string> = {
 
 /** For example "pass · 2 checks" or "regression · 1 of 2 checks failed". */
 export function summaryLine(report: VerifyReport): string {
-  const failed = report.checks.filter((c) => !c.pass).length;
-  const n = report.checks.length;
+  const all = [...report.checks, ...(report.webgl ?? [])];
+  const failed = all.filter((c) => !c.pass).length;
+  const n = all.length;
   const checks = `${n} check${n === 1 ? "" : "s"}`;
   return failed === 0 ? `pass · ${checks}` : `regression · ${failed} of ${checks} failed`;
 }
@@ -344,11 +350,26 @@ async function check(
         .map(normalizeError),
     );
 
+  // A three.js site: canvases are masked in the page diff and compared as scenes instead.
+  const framework = await readFramework(paths);
+  const webgl =
+    recovererByName(framework.recoverer).verifyHints?.(framework).webgl === true &&
+    existsSync(path.join(paths.raw, "webgl", "index.json"));
+  const assetsFile = webgl
+    ? await readJsonFile<{ mode: string; assets: { type: string; bodyHash: string }[] }>(
+        path.join(paths.analysis, "assets.json"),
+      )
+    : undefined;
+  const withheld =
+    assetsFile && assetsFile.mode !== "original"
+      ? new Set(assetsFile.assets.filter((a) => a.type !== "decoder").map((a) => a.bodyHash))
+      : undefined;
   const { origin, server } = await serveDist(dist);
   let browser: Browser | undefined;
   const onAbort = () => void browser?.close().catch(() => {});
   options.signal?.addEventListener("abort", onAbort, { once: true });
   const checks: PageCheck[] = [];
+  let webglResults: WebglCheck[] | undefined;
   try {
     browser = await launchBrowser({
       ...(options.headless !== undefined ? { headless: options.headless } : {}),
@@ -386,12 +407,33 @@ async function check(
               known: knownErrors(page.slug, viewport),
               primary: viewport === captured[0],
               options,
+              maskCanvas: webgl,
+              ...(withheld ? { withheld } : {}),
             }),
           );
         }
       } finally {
         await context.close().catch(() => {});
       }
+    }
+    if (webgl) {
+      await browser?.close().catch(() => {});
+      browser = undefined;
+      webglResults = await webglChecks({
+        paths,
+        framework,
+        origin,
+        dist,
+        replay,
+        store,
+        viewports,
+        pages: pages.map((p) => p.slug),
+        s2sVersion: manifest?.s2sVersion ?? "0.0.0",
+        ...(options.headless !== undefined ? { headless: options.headless } : {}),
+        ...(options.executablePath ? { executablePath: options.executablePath } : {}),
+        ...(options.signal ? { signal: options.signal } : {}),
+        onPage: (page, viewport) => progress({ kind: "page", page: `${page} (webgl)`, viewport }),
+      });
     }
   } finally {
     options.signal?.removeEventListener("abort", onAbort);
@@ -402,7 +444,10 @@ async function check(
     });
   }
 
-  const status = checks.every((c) => c.pass) ? "pass" : "regression";
+  const status =
+    checks.every((c) => c.pass) && (webglResults ?? []).every((c) => c.pass)
+      ? "pass"
+      : "regression";
   const history = await readHistory(paths);
   const lastPass = [...history].reverse().find((h) => h.status === "pass");
   return {
@@ -411,6 +456,7 @@ async function check(
     thresholds,
     baselineUpdated: Boolean(options.updateBaseline),
     checks,
+    ...(webglResults ? { webgl: webglResults } : {}),
     sinceLastPass: lastPass
       ? {
           at: lastPass.at,
@@ -453,6 +499,10 @@ async function checkPage(input: {
   /** The viewport the capture wrote `dom.html` for. */
   primary: boolean;
   options: VerifyOptions;
+  /** Mask every canvas in the pixel diff (WebGL pages: verify compares their scenes instead). */
+  maskCanvas?: boolean;
+  /** Captured bodies never replayed (the original art, in proxy and clone mode). */
+  withheld?: Set<string>;
 }): Promise<PageCheck> {
   const { context, paths, viewport, origin, dist, replay, store, thresholds, options } = input;
   const slug = input.page.slug;
@@ -464,42 +514,16 @@ async function checkPage(input: {
   let lastActivity = Date.now();
 
   const page: Page = await context.newPage();
-  await page.route("**/*", async (route) => {
-    const url = route.request().url();
-    if (!/^https?:/.test(url)) return route.continue();
-    const parsed = new URL(url);
-    if (parsed.origin === origin) {
-      const file = path.join(dist, safeDecode(parsed.pathname) ?? "\0");
-      const exists =
-        file.startsWith(dist) &&
-        (await stat(file).then(
-          (s) => s.isFile(),
-          () => false,
-        ));
-      if (!exists) {
-        const hit = replay.lookup(url, origin);
-        if (hit) {
-          replayed++;
-          return route.fulfill({
-            status: hit.status,
-            headers: hit.headers,
-            body: await store.read(hit.bodyHash),
-          });
-        }
-      }
-      return route.continue();
-    }
-    const hit = replay.lookup(url, origin);
-    if (hit) {
+  await installReplay(page, {
+    origin,
+    dist,
+    replay,
+    store,
+    blocked,
+    onReplay: () => {
       replayed++;
-      return route.fulfill({
-        status: hit.status,
-        headers: hit.headers,
-        body: await store.read(hit.bodyHash),
-      });
-    }
-    blocked.add(url);
-    return route.abort("blockedbyclient");
+    },
+    ...(input.withheld ? { withheld: input.withheld } : {}),
   });
   page.on("dialog", (dialog) => void dialog.dismiss().catch(() => {}));
   page.on("console", (message) => {
@@ -568,6 +592,7 @@ async function checkPage(input: {
     const mask =
       (await readJsonFile<Rect[]>(path.join(paths.screenshots, slug, `${viewport}.mask.json`))) ??
       [];
+    if (input.maskCanvas) mask.push(...(await canvasRects(page, VIEWPORTS[viewport].scale)));
 
     let pixelDiff: number | null = null;
     let worstRegions: Rect[] = [];

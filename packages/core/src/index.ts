@@ -57,6 +57,12 @@ export {
   WorkspaceError,
 } from "./maps/run.js";
 export {
+  type FrameworkFile,
+  RECOVERER_API_VERSION,
+  type Recoverer,
+} from "./recoverers/api.js";
+export { readFramework } from "./recoverers/registry.js";
+export {
   agentsMd,
   CLAUDE_MD,
   claudeSettings,
@@ -98,3 +104,5 @@ export {
   type VerifyResult,
   verify,
 } from "./verify/run.js";
+export { ASSET_MODES, type AssetMode, LOCAL_ONLY_NOTICE } from "./webgl/assets.js";
+export { KeyframeSpecError, parseKeyframes } from "./webgl/keyframes.js";

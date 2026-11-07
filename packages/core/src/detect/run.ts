@@ -10,6 +10,7 @@ import { type WorkspacePaths, workspacePaths } from "../capture/workspace.js";
 import { writeFileAtomic, writeJsonAtomic } from "../fs-util.js";
 import type { ProjectHints } from "../maps/hints.js";
 import { WorkspaceError } from "../maps/run.js";
+import { chooseRecoverer, recovererContext, writeFramework } from "../recoverers/registry.js";
 import { checkPackages, DEFAULT_POPULARITY_FLOOR } from "./check.js";
 import { COLLECTORS, type CollectorName } from "./collectors.js";
 import { type DetectContext, loadContext } from "./context.js";
@@ -33,6 +34,12 @@ import {
 } from "./project.js";
 import { type BundleRanges, vendorRanges } from "./ranges.js";
 import { Registry, type RegistryOptions, resolveVersion } from "./registry.js";
+
+const UNSUPPORTED_LABEL: Record<string, string> = {
+  webgpu: "WebGPU (WebGPURenderer, TSL or WGSL)",
+  babylon: "Babylon.js",
+  playcanvas: "PlayCanvas",
+};
 
 export interface DetectOptions {
   /** Workspace folder written by `s2s capture`. */
@@ -366,8 +373,14 @@ async function run(
       if (record.status !== "transitive") continue;
       const parents = records.filter((r) => record.transitiveOf.includes(r.name));
       if (parents.every((p) => p.status === "review" || p.status === "rejected")) {
-        record.status = "review";
-        record.reason = `depends on ${record.transitiveOf.join(", ")}, which ${parents.length === 1 ? "is" : "are"} not accepted`;
+        // Evidence of its own (three's runtime `REVISION`) stands without the parent.
+        if (CONFIDENCE_RANK[record.confidence] >= CONFIDENCE_RANK[min]) {
+          record.status = record.dev ? "devDependency" : "dependency";
+          record.reason = null;
+        } else {
+          record.status = "review";
+          record.reason = `depends on ${record.transitiveOf.join(", ")}, which ${parents.length === 1 ? "is" : "are"} not accepted`;
+        }
         changed = true;
       }
     }
@@ -441,7 +454,20 @@ async function run(
       })),
   });
 
-  // 7. Install, with scripts disabled.
+  // 7. Which recoverer handles the rest of the pipeline (analysis/framework.json).
+  const chosen = await chooseRecoverer(
+    await recovererContext(
+      paths,
+      records.map((r) => ({ name: r.name, version: r.version, status: r.status })),
+    ),
+  );
+  await writeFramework(paths, chosen.file);
+  for (const name of chosen.file.unsupported)
+    warn(
+      `The site uses ${UNSUPPORTED_LABEL[name] ?? name}, which s2s detects but cannot recover; see analysis/framework.json.`,
+    );
+
+  // 8. Install, with scripts disabled.
   let install: Omit<InstallResult, "output"> | undefined;
   if (options.install) {
     progress({ kind: "install", manager: manager.name, dir: out.project });
@@ -473,6 +499,7 @@ async function run(
       packageManager: manager.name,
       packageManagerSource: manager.source,
       offline: Boolean(options.offline),
+      recoverer: chosen.file.recoverer,
       ...(install ? { lockfile: install.lockfile } : {}),
     },
     rows: records.map(toRow),

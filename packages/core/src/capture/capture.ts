@@ -2,7 +2,12 @@ import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright-core";
 import { writeJsonAtomic } from "../fs-util.js";
+import { builtinRecoverers } from "../recoverers/registry.js";
 import { decodePng, dynamicMask } from "../verify/image.js";
+import { type WebglIndex, webglPass } from "../webgl/capture-pass.js";
+import { webglInitScript } from "../webgl/init-script.js";
+import { DEFAULT_MAX_KEYFRAMES, parseKeyframes } from "../webgl/keyframes.js";
+import { WEBGL_QUIET_MS } from "../webgl/session.js";
 import { BodyStore } from "./body-store.js";
 import { launchBrowser } from "./browser.js";
 import { collectCdnPackages } from "./cdn.js";
@@ -69,6 +74,14 @@ export interface CaptureOptions {
   onProgress?: (event: CaptureProgress) => void;
   headless?: boolean;
   executablePath?: string;
+  /**
+   * WebGL keyframes: `auto` (time steps 0, 1 and 3 s, then one scroll step per viewport height)
+   * or a list such as `t0,t1000,s1,s2`.
+   */
+  keyframes?: string;
+  maxKeyframes?: number;
+  /** Run the deterministic WebGL pass when a recoverer asks for it. Defaults to true. */
+  webglDeterministic?: boolean;
   /** Called for each new browser context before any page opens (tests use it to mock routes). */
   onContext?: (context: BrowserContext) => Promise<void> | void;
 }
@@ -133,6 +146,9 @@ function resolvedOptions(options: CaptureOptions) {
     maxDiscoveryFiles: options.maxDiscoveryFiles ?? 2_000,
     maxBodyBytes: options.maxBodyBytes ?? 50 * 1024 * 1024,
     maskDelayMs: options.maskDelayMs ?? 3_000,
+    keyframes: options.keyframes ?? "auto",
+    maxKeyframes: options.maxKeyframes ?? DEFAULT_MAX_KEYFRAMES,
+    webglDeterministic: options.webglDeterministic ?? true,
   };
 }
 
@@ -160,6 +176,7 @@ export async function capture(options: CaptureOptions): Promise<CaptureResult> {
   const target = cleanUrl(options.url);
   if (!target) throw new Error(`Not an http(s) URL: ${options.url}`);
   const opts = resolvedOptions(options);
+  const keyframePlan = parseKeyframes(opts.keyframes);
   const root = path.resolve(options.cwd ?? process.cwd(), options.outDir ?? workspaceSlug(target));
   const paths = workspacePaths(root);
   const progress = options.onProgress ?? (() => {});
@@ -278,9 +295,19 @@ export async function capture(options: CaptureOptions): Promise<CaptureResult> {
     discoveryRounds: discovery.rounds,
     mapsFound: discovery.maps.length,
     blindProbesSkipped: discovery.blindProbesSkipped,
+    ...(webgl
+      ? {
+          webglKeyframes: webgl.pages.reduce(
+            (n, p) => n + p.viewports.reduce((m, v) => m + v.keyframes.length, 0),
+            0,
+          ),
+          webglPrograms: webgl.shaders,
+        }
+      : {}),
     durationMs: Date.now() - startedAt.getTime(),
   });
 
+  let webgl: WebglIndex | undefined;
   let status: Manifest["stages"]["capture"]["status"] = "partial";
   let errorMessage: string | undefined;
   const allAssets: CapturedAsset[] = [];
@@ -402,6 +429,39 @@ export async function capture(options: CaptureOptions): Promise<CaptureResult> {
       context = undefined;
       if (primary) pageQueue = [];
     }
+    // A recoverer may ask for more: three wants the deterministic WebGL pass.
+    const hints = builtinRecoverers()
+      .map((r) => r.captureHints?.({ probes: runtime as Record<string, unknown>[] }))
+      .filter((h) => h !== undefined);
+    if (hints.some((h) => h.webgl)) {
+      if (!opts.webglDeterministic) {
+        warn("WebGL detected; skipped the deterministic pass (--webgl-deterministic=false).");
+      } else {
+        progress({ kind: "phase", phase: "webgl", viewport: null, page: null, url: null });
+        webgl = await webglPass({
+          paths,
+          pages: pagesCaptured,
+          viewports: opts.viewports,
+          userAgents,
+          recorder,
+          keyframes: keyframePlan,
+          keyframesSpec: opts.keyframes,
+          maxKeyframes: opts.maxKeyframes,
+          quietMs: WEBGL_QUIET_MS,
+          phaseTimeoutMs: opts.phaseTimeoutMs,
+          ...(options.authState ? { authState: options.authState } : {}),
+          ...(options.headless !== undefined ? { headless: options.headless } : {}),
+          ...(options.executablePath ? { executablePath: options.executablePath } : {}),
+          ...(options.onContext ? { onContext: options.onContext } : {}),
+          warn,
+          onPage: (page, viewport) =>
+            progress({ kind: "phase", phase: "webgl", viewport, page, url: null }),
+          ...(signal ? { signal } : {}),
+        });
+        await recorder.drain();
+        emitStats(true);
+      }
+    }
     if (discovery.capped)
       warn("Chunk discovery hit its round or file cap; some chunks may be missing.");
     if (discovery.blindProbesSkipped > 0) {
@@ -475,7 +535,7 @@ export async function buildUserAgents(
   };
 }
 
-function newContext(
+async function newContext(
   browser: Browser,
   viewport: ViewportName,
   userAgent: string,
@@ -493,7 +553,10 @@ function newContext(
     ignoreHTTPSErrors: false,
     ...(authState ? { storageState: authState } : {}),
   };
-  return browser.newContext(contextOptions);
+  const context = await browser.newContext(contextOptions);
+  // The light WebGL probe: counts contexts and lets three report itself; nothing deterministic.
+  await context.addInitScript(webglInitScript({ seed: null, full: false }));
+  return context;
 }
 
 interface PageResult {

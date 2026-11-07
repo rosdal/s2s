@@ -7,6 +7,7 @@ import { BUILT_FIXTURES, FIXTURE_ROOTS, FIXTURES_DIR } from "./fixtures.js";
 export default function setup(): void {
   for (const name of BUILT_FIXTURES) {
     if (existsSync(path.join(FIXTURES_DIR, FIXTURE_ROOTS[name]))) continue;
+    if (!existsSync(path.join(FIXTURES_DIR, name, "package.json"))) continue;
     console.log(`Building fixture ${name}…`);
     execFileSync("pnpm", ["--filter", `@s2s-fixtures/${name}`, "run", "build"], {
       stdio: "inherit",

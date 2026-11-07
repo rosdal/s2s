@@ -18,8 +18,15 @@ import {
   type Draft,
   type ImportLine,
   type UnpackContext,
+  type VendorSpan,
 } from "./types.js";
-import { coveringPackage, vendorImport, wrapperEdits } from "./vendor.js";
+import {
+  cjsValue,
+  coveringPackage,
+  vendorImport,
+  vendorNamespace,
+  wrapperEdits,
+} from "./vendor.js";
 
 /** One statement of the scope being split. */
 interface Unit {
@@ -32,6 +39,8 @@ interface Unit {
   uses: Map<string, number>;
   /** Bindings of other units this one assigns to. */
   writes: Set<number>;
+  /** Units whose bindings this one mutates through a member (`x.a = 1`, `x.n++`). */
+  mutates: Set<number>;
   imports: { local: string; source: string; imported: string }[];
   sideEffectImport: string | null;
   /** Names the chunk exports from this unit, as `[exported, local]`. */
@@ -43,6 +52,285 @@ interface Unit {
   keyword?: string;
   /** `var a = wrap((e, m) => { m.exports = b() })`: a wrapper that only re-exports `b`. */
   aliasOf?: { name: string; target: string; start: number; end: number };
+}
+
+/**
+ * In a scope-hoisted bundle a library is one stretch of statements; the fingerprint index can miss
+ * some of them, which leaves library internals in the site's code. A run of kept statements
+ * between two dropped statements of the same package is that package's own code when it assigns
+ * the package's bindings (site code only calls a library), or when the package's dropped code
+ * references it and nothing else kept outside the run does. Repeated until nothing changes.
+ */
+export function absorbWedged(units: Unit[]): void {
+  const usedBy = new Map<number, Set<number>>();
+  for (const u of units)
+    for (const at of u.uses.values()) {
+      const set = usedBy.get(at) ?? new Set<number>();
+      set.add(u.index);
+      usedBy.set(at, set);
+    }
+  for (let changed = true; changed; ) {
+    changed = false;
+    let i = 0;
+    while (i < units.length) {
+      const before = units[i - 1]?.dropped;
+      if ((units[i] as Unit).dropped || !before?.package) {
+        i++;
+        continue;
+      }
+      let j = i;
+      while (j < units.length && !(units[j] as Unit).dropped) j++;
+      const after = units[j]?.dropped;
+      const run = units.slice(i, j);
+      if (after?.package === before.package && run.every((u) => u.exported.length === 0)) {
+        const inRun = new Set(run.map((u) => u.index));
+        const ofPackage = (k: number) => units[k]?.dropped?.package === before.package;
+        const writesPackage = run.some((u) => [...u.writes].some(ofPackage));
+        const calledByPackage =
+          run.some((u) => [...(usedBy.get(u.index) ?? [])].some(ofPackage)) &&
+          run.every((u) =>
+            [...(usedBy.get(u.index) ?? [])].every((k) => inRun.has(k) || units[k]?.dropped),
+          );
+        if (writesPackage || calledByPackage) {
+          for (const u of run) u.dropped = { package: before.package, version: before.version };
+          changed = true;
+        }
+      }
+      i = j;
+    }
+  }
+}
+
+/** A CommonJS wrapper replaced by a getter for its package (`() => (__vendor_x…)`). */
+const isVendorGetter = (text: string) => /^\(\) => \(?__vendor_/.test(text);
+
+/**
+ * `var plugin_exports = __exportAll({ css: () => css, plugins: () => plugins })`: the bundler's
+ * namespace object for a package whose code was dropped. Every getter reads that package, so the
+ * object is the package's namespace and readers import it instead.
+ */
+export function absorbNamespaceObjects(units: Unit[]): void {
+  for (const unit of units) {
+    // Also one already dropped under the wrong package (bridged into the code around it).
+    if (unit.node.type !== "VariableDeclaration") continue;
+    const init = unit.node.declarations[0]?.init;
+    if (
+      unit.node.declarations.length !== 1 ||
+      init?.type !== "CallExpression" ||
+      init.callee.type !== "Identifier" ||
+      !/^__export(All)?$/.test(init.callee.name)
+    )
+      continue;
+    const obj = init.arguments.find((a) => a.type === "ObjectExpression");
+    if (obj?.type !== "ObjectExpression" || obj.properties.length === 0) continue;
+    const read: string[] = [];
+    for (const p of obj.properties) {
+      const v = p.type === "ObjectProperty" ? p.value : null;
+      const body = v?.type === "ArrowFunctionExpression" ? v.body : null;
+      if (body?.type !== "Identifier") {
+        read.length = 0;
+        break;
+      }
+      read.push(body.name);
+    }
+    if (read.length === 0) continue;
+    const owners = read.map((name) => {
+      const at = unit.uses.get(name);
+      return at === undefined ? undefined : units[at]?.dropped?.package;
+    });
+    const pkg = owners[0];
+    if (pkg && owners.every((o) => o === pkg) && unit.dropped?.package !== pkg)
+      unit.dropped = { package: pkg, version: null };
+  }
+}
+
+/** The largest statement `absorbBuiltFrom` takes for a package's own. */
+const BUILT_FROM_BYTES = 1024;
+
+/**
+ * `var color = new ConvertType("color")`: a small declaration or call that reads only one
+ * package's dropped bindings, with that package's dropped code on both sides, is the package's
+ * own (fingerprints cover functions, not these). Site code that reads it imports it from the
+ * package instead. Repeated, as each one absorbed can make its neighbours eligible.
+ */
+export function absorbBuiltFrom(units: Unit[]): void {
+  const nearest = (from: number, step: number) => {
+    for (let k = from; k >= 0 && k < units.length; k += step) {
+      const d = units[k]?.dropped;
+      if (d) return d.package;
+    }
+    return undefined;
+  };
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const unit of units) {
+      if (unit.dropped || unit.exported.length > 0 || unit.bytes > BUILT_FROM_BYTES) continue;
+      if (unit.node.type !== "VariableDeclaration" && unit.node.type !== "ExpressionStatement")
+        continue;
+      const owners = [...unit.uses.values()].map((at) => units[at]?.dropped?.package);
+      const pkg = owners[0];
+      if (!pkg || !owners.every((o) => o === pkg)) continue;
+      if (nearest(unit.index - 1, -1) !== pkg || nearest(unit.index + 1, 1) !== pkg) continue;
+      unit.dropped = { package: pkg, version: null };
+      changed = true;
+    }
+  }
+}
+
+/**
+ * A dropped statement whose binding kept code assigns (`_zstd ||= …`) or mutates through a member
+ * (`internals.priority = 4`) stays: an import is read-only, so the binding must be the module's
+ * own. Repeated, as a kept statement may write further dropped ones.
+ */
+export function keepWritten(units: Unit[]): void {
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const unit of units) {
+      if (unit.dropped) continue;
+      for (const target of [...unit.writes, ...unit.mutates]) {
+        const owner = units[target];
+        if (!owner?.dropped) continue;
+        // An exported statement is reached from other chunks through the vendor import instead.
+        if (owner.exported.length === 0) {
+          owner.dropped = null;
+          changed = true;
+        } else if (
+          unit.node.type === "ExpressionStatement" &&
+          unit.mutates.has(target) &&
+          unit.exported.length === 0
+        ) {
+          // `useGLTF.clear = …` on an exported library function: the library's own code.
+          unit.dropped = { ...owner.dropped };
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+}
+
+/**
+ * `var m = { exports: {} }` and `var e = {}` that only one dropped library fills (`e.version = …`,
+ * `m.exports = e`) are that library's CommonJS records: kept, they stay empty. An empty object
+ * becomes the library's import; a module record keeps its shape and holds the library as its
+ * exports. Returns the units whose record now reads the library, with the package.
+ */
+export function adoptRecords(units: Unit[]): Map<number, string> {
+  const fillers = new Map<number, Unit[]>();
+  for (const u of units)
+    for (const target of [...u.writes, ...u.mutates])
+      fillers.set(target, [...(fillers.get(target) ?? []), u]);
+  const records = new Map<number, string>();
+  for (const unit of units) {
+    if (unit.dropped) continue;
+    const kind = recordKind(unit.node);
+    const by = fillers.get(unit.index) ?? [];
+    const pkg = by[0]?.dropped?.package;
+    if (!kind || !pkg || !by.every((u) => u.dropped?.package === pkg)) continue;
+    // Another chunk reading an exported object imports it from this one; a module record keeps
+    // its export and only changes what it holds.
+    if (kind === "object" && unit.exported.length > 0) continue;
+    if (kind === "object")
+      unit.dropped = { package: pkg, version: by[0]?.dropped?.version ?? null };
+    else records.set(unit.index, pkg);
+  }
+  return records;
+}
+
+function recordKind(node: t.Statement): "object" | "module" | null {
+  if (node.type !== "VariableDeclaration" || node.declarations.length !== 1) return null;
+  const init = node.declarations[0]?.init;
+  if (init?.type !== "ObjectExpression") return null;
+  if (init.properties.length === 0) return "object";
+  const [p] = init.properties;
+  if (
+    init.properties.length === 1 &&
+    p?.type === "ObjectProperty" &&
+    !p.computed &&
+    ((p.key.type === "Identifier" && p.key.name === "exports") ||
+      (p.key.type === "StringLiteral" && p.key.value === "exports")) &&
+    p.value.type === "ObjectExpression" &&
+    p.value.properties.length === 0
+  )
+    return "module";
+  return null;
+}
+
+/**
+ * A statement that opens inside one package's range and is mostly covered by it is that package's
+ * code: a range ends where the matched functions do, and a long library function that differs
+ * from the indexed version (R3F's `Canvas`) is only matched in its nested callbacks.
+ */
+export function headedBy(
+  spans: VendorSpan[],
+  from: number,
+  to: number,
+  share = 0.5,
+): VendorSpan | undefined {
+  const head = spans.find((s) => s.start <= from && s.end > from);
+  if (!head) return undefined;
+  let covered = 0;
+  for (const s of spans)
+    if (s.package === head.package)
+      covered += Math.max(0, Math.min(s.end, to) - Math.max(s.start, from));
+  return covered / Math.max(1, to - from) >= share ? head : undefined;
+}
+
+/**
+ * A kept statement that only touches one dropped library's bindings and spells that library's
+ * name (`reconciler.injectIntoDevTools({ rendererPackageName: "@react-three/fiber" })`) is the
+ * library's own code: site code calls a library without naming its package.
+ */
+export function absorbSelfNamed(units: Unit[]): void {
+  for (const unit of units) {
+    if (unit.dropped || unit.exported.length > 0 || unit.node.type !== "ExpressionStatement")
+      continue;
+    const owners = [...unit.uses.values()].map((at) => units[at]?.dropped?.package);
+    const pkg = owners[0];
+    if (!pkg || !owners.every((p) => p === pkg)) continue;
+    if (namesString(unit.node, pkg)) unit.dropped = { package: pkg, version: null };
+  }
+}
+
+function namesString(node: t.Node, value: string): boolean {
+  let found = false;
+  const visit = (n: unknown, depth: number): void => {
+    if (found || !n || typeof n !== "object" || depth > 40) return;
+    if (Array.isArray(n)) {
+      for (const x of n) visit(x, depth + 1);
+      return;
+    }
+    const o = n as { type?: string; value?: unknown };
+    if (o.type === "StringLiteral" && o.value === value) {
+      found = true;
+      return;
+    }
+    for (const [k, v] of Object.entries(o))
+      if (k !== "loc" && k !== "leadingComments" && k !== "trailingComments") visit(v, depth + 1);
+  };
+  visit(node, 0);
+  return found;
+}
+
+/** Exported functions this small are the bundler's runtime (`__commonJSMin`, `__toESM`). */
+const RUNTIME_HELPER_BYTES = 700;
+
+/**
+ * The bundler's own runtime helpers, exported for other chunks, sit inside a library's range when
+ * the library is first in the chunk. They are no package's export, so they stay.
+ */
+export function keepRuntimeHelpers(units: Unit[], code: string): void {
+  for (const unit of units) {
+    if (!unit.dropped || unit.exported.length === 0 || unit.bytes > RUNTIME_HELPER_BYTES) continue;
+    const text = declarationText(unit.node, code) ?? "";
+    const fn = /^(?:\([\w$,\s]*\)|[\w$]+)\s*=>|^function\b/.test(text);
+    if (
+      fn &&
+      (helperKind(text) ||
+        /Object\.(?:defineProperty|create|getOwnPropertyNames)|__esModule/.test(text))
+    )
+      unit.dropped = null;
+  }
 }
 
 /** A CommonJS wrapper whose whole body is `module.exports = other()`. */
@@ -108,8 +396,9 @@ export function splitScope(
   chunk: ChunkInput,
   ctx: UnpackContext,
   mode: SplitMode,
-): { drafts: Draft[]; table: ChunkTable } {
+): { drafts: Draft[]; table: ChunkTable; inlined: InlinedVendor[] } {
   const code = chunk.code;
+  const inlined: InlinedVendor[] = [];
   const ast = parseCode(code);
   let container: NodePath<t.Program> | NodePath<t.BlockStatement> | undefined;
   let programPath: NodePath<t.Program> | undefined;
@@ -122,7 +411,11 @@ export function splitScope(
       functions.push(path);
     },
   });
-  const empty = { drafts: [], table: { entry: null, exports: new Map() } };
+  const empty = {
+    drafts: [],
+    table: { entry: null, exports: new Map(), vendor: new Map() },
+    inlined: [],
+  };
   if (!programPath) return empty;
   container = programPath;
   // A whole-file IIFE (esbuild's `(() => {…})()`, webpack-free scripts) holds the real top level.
@@ -174,6 +467,7 @@ export function splitScope(
     declares: [],
     uses: new Map(),
     writes: new Set(),
+    mutates: new Set(),
     imports: [],
     sideEffectImport: null,
     exported: [],
@@ -224,7 +518,18 @@ export function splitScope(
           ...(getterCalls.get(name) ?? []),
           [start(call.node), end(call.node)],
         ]);
-      if (user >= 0 && user !== at) (units[user] as Unit).uses.set(name, at);
+      if (user >= 0 && user !== at) {
+        (units[user] as Unit).uses.set(name, at);
+        const member = ref.parentPath;
+        const target = member?.parentPath;
+        if (
+          member?.isMemberExpression() &&
+          member.node.object === ref.node &&
+          ((target?.isAssignmentExpression() && target.node.left === member.node) ||
+            target?.isUpdateExpression())
+        )
+          (units[user] as Unit).mutates.add(at);
+      }
     }
     for (const violation of binding.constantViolations) {
       const writer = unitAt(start(violation.node));
@@ -341,26 +646,93 @@ export function splitScope(
         if (helperKind(code.slice(start(d.init), end(d.init))) === "cjs") cjs.add(d.id.name);
       }
     }
+    // Rolldown keeps its runtime in a chunk of its own: `import { __commonJSMin } from "./rolldown-runtime.js"`.
+    for (const unit of units)
+      for (const i of unit.imports)
+        if (/^__commonJS(Min)?$/.test(i.imported) || /^__commonJS(Min)?$/.test(i.local))
+          cjs.add(i.local);
     const toGetter = (name: string, from: number, to: number, line: ImportLine) => {
-      attach({ start: from, end: to, text: `() => ${line.namespace}` }, line);
+      attach({ start: from, end: to, text: `() => ${cjsValue(line.namespace ?? "")}` }, line);
       for (const [s, e] of getterCalls.get(name) ?? [])
-        attach({ start: s, end: e, text: line.namespace ?? "" }, line);
+        attach({ start: s, end: e, text: cjsValue(line.namespace ?? "") }, line);
       getters.set(name, line);
     };
     // Statements (nearly) all inside one package's ranges: a CommonJS wrapper becomes a getter,
     // anything else goes. Source-map ranges come in runs with unmapped gaps, hence "nearly".
     const rest = chunk.vendor.filter((s) => !wrappers.covered.includes(s));
     for (const unit of units) {
-      if (unit.edits.some((e) => e.text.startsWith("() => __vendor_"))) continue;
-      const span = coveringPackage(rest, unit.start, unit.end);
+      if (unit.edits.some((e) => isVendorGetter(e.text))) continue;
+      const span =
+        coveringPackage(rest, unit.start, unit.end) ?? headedBy(rest, unit.start, unit.end);
       if (!span) continue;
       const call = wrapperCall(unit.node);
       const d = (unit.node as t.VariableDeclaration).declarations?.[0];
+      const inline = inlinedVendorClass(unit.node);
+      const readOutside =
+        inline &&
+        (refsOf.get(inline.name) ?? []).some(
+          (pos) => (pos < unit.start || pos >= unit.end) && !coveringPackage(rest, pos, pos + 1, 1),
+        );
       if (call && cjs.has(call.helper) && d?.id.type === "Identifier" && d.init) {
         toGetter(d.id.name, start(d.init), end(d.init), vendorImport(span));
+      } else if (inline && readOutside) {
+        // `var r = new class extends …{…}(opts)`: a library class the minifier inlined into the
+        // site's one `new`. The site's statement stays; the class becomes an import, named after
+        // install (analysis/vendor-inline.json).
+        const name = `__inline${vendorNamespace(span.package).slice("__vendor".length)}_${inlined.length + 1}`;
+        unit.edits.push({ start: inline.start, end: inline.end, text: name });
+        vendorImports.set(unit.index, [
+          ...(vendorImports.get(unit.index) ?? []),
+          { ...vendorImport(span), namespace: name },
+        ]);
+        inlined.push({ name, package: span.package, text: code.slice(inline.start, inline.end) });
       } else {
         unit.dropped = { package: span.package, version: span.version };
       }
+    }
+    absorbWedged(units);
+    absorbBuiltFrom(units);
+    absorbNamespaceObjects(units);
+    keepWritten(units);
+    keepRuntimeHelpers(units, code);
+    absorbSelfNamed(units);
+    // `var import_seedrandom = require_seedrandom()` absorbed into the library around it, while
+    // site code reads it: it stands for the getter's package, so it stays and the call becomes
+    // that package's value.
+    const readByKept = (name: string) =>
+      (refsOf.get(name) ?? []).some((pos) => {
+        const at = unitAt(pos);
+        return at >= 0 && !(units[at] as Unit).dropped;
+      });
+    for (const unit of units) {
+      if (!unit.dropped) continue;
+      const init = (unit.node as t.VariableDeclaration).declarations?.[0]?.init;
+      const getter =
+        init?.type === "CallExpression" && init.callee.type === "Identifier"
+          ? getters.get(init.callee.name)
+          : undefined;
+      const name = unit.declares[0];
+      if (
+        getter?.target.kind === "package" &&
+        getter.target.name !== unit.dropped.package &&
+        name &&
+        readByKept(name)
+      )
+        unit.dropped = null;
+    }
+    for (const [at, pkg] of adoptRecords(units)) {
+      const unit = units[at] as Unit;
+      const init = (unit.node as t.VariableDeclaration).declarations[0]?.init as t.Node;
+      const ns = vendorNamespace(pkg);
+      unit.edits.push({ start: start(init), end: end(init), text: `{ exports: ${ns} }` });
+      vendorImports.set(at, [
+        ...(vendorImports.get(at) ?? []),
+        {
+          ...vendorImport({ package: pkg, version: null }),
+          namespace: ns,
+          note: `${unit.declares[0]} was ${pkg}'s CommonJS module record; it holds the package now`,
+        },
+      ]);
     }
     for (let changed = true; changed; ) {
       changed = false;
@@ -400,8 +772,7 @@ export function splitScope(
   for (const unit of units) {
     if (unit.dropped) vendorBytesRemoved += unit.bytes;
     else
-      for (const e of unit.edits)
-        if (e.text.startsWith("() => __vendor_")) vendorBytesRemoved += e.end - e.start;
+      for (const e of unit.edits) if (isVendorGetter(e.text)) vendorBytesRemoved += e.end - e.start;
   }
 
   // 1. Which part each statement belongs to.
@@ -564,10 +935,64 @@ export function splitScope(
   for (const [part, pairs] of exportedLocals)
     for (const [exported, local] of pairs)
       chunkExports.set(exported, { key: keyOf(find(part)), local });
+  // Exports whose statement was dropped as library code: other chunks import them from the
+  // package instead, and the declaration's text lets the scaffold name them after install.
+  const vendorExports: ChunkTable["vendor"] = new Map();
+  for (const unit of units) {
+    if (!unit.dropped?.package) continue;
+    const text = declarationText(unit.node, code);
+    for (const [exported] of unit.exported)
+      if (!chunkExports.has(exported))
+        vendorExports.set(exported, {
+          package: unit.dropped.package,
+          version: unit.dropped.version,
+          ...(text ? { text } : {}),
+        });
+  }
   return {
     drafts,
-    table: { entry: entryPart === undefined ? null : keyOf(entryPart), exports: chunkExports },
+    table: {
+      entry: entryPart === undefined ? null : keyOf(entryPart),
+      exports: chunkExports,
+      vendor: vendorExports,
+    },
+    inlined,
   };
+}
+
+/** A declaration's value as expression text: a declarator's init, or a function or class. */
+function declarationText(node: t.Statement, code: string): string | undefined {
+  if (node.type === "VariableDeclaration") {
+    const init = node.declarations.length === 1 ? node.declarations[0]?.init : undefined;
+    return init ? code.slice(start(init), end(init)) : undefined;
+  }
+  if (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration")
+    return code.slice(start(node), end(node));
+  return undefined;
+}
+
+/** A library class or function a minifier inlined into a site statement, replaced by an import. */
+export interface InlinedVendor {
+  /** The placeholder binding the recovered code reads. */
+  name: string;
+  package: string;
+  /** The inlined expression's source, for naming it after install. */
+  text: string;
+  /** The recovered module that reads it, when the name is that module's alone. */
+  file?: string;
+}
+
+/** `var r = new class …{…}(…)` (or `new function…`): the inlined callee's span and the binding. */
+function inlinedVendorClass(
+  node: t.Statement,
+): { name: string; start: number; end: number } | undefined {
+  if (node.type !== "VariableDeclaration" || node.declarations.length !== 1) return undefined;
+  const d = node.declarations[0];
+  const init = d?.init;
+  if (d?.id.type !== "Identifier" || init?.type !== "NewExpression") return undefined;
+  const callee = init.callee;
+  if (callee.type !== "ClassExpression" && callee.type !== "FunctionExpression") return undefined;
+  return { name: d.id.name, start: start(callee), end: end(callee) };
 }
 
 function isModuleSyntaxOnly(unit: Unit): boolean {
@@ -605,6 +1030,8 @@ export function resolveUrl(spec: string, base: string): string | undefined {
 export interface ChunkTable {
   entry: string | null;
   exports: Map<string, { key: string; local: string }>;
+  /** Exports dropped as library code, by exported name. */
+  vendor?: Map<string, { package: string; version: string | null; text?: string }>;
 }
 
 interface Assignment {

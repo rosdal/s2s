@@ -1,4 +1,6 @@
 import { z } from "zod";
+import rapier from "./signatures/@dimforge__rapier3d-compat.json" with { type: "json" };
+import r3f from "./signatures/@react-three__fiber.json" with { type: "json" };
 import axios from "./signatures/axios.json" with { type: "json" };
 import chartJs from "./signatures/chart.js.json" with { type: "json" };
 import coreJs from "./signatures/core-js.json" with { type: "json" };
@@ -7,6 +9,7 @@ import dayjs from "./signatures/dayjs.json" with { type: "json" };
 import framerMotion from "./signatures/framer-motion.json" with { type: "json" };
 import gsap from "./signatures/gsap.json" with { type: "json" };
 import jquery from "./signatures/jquery.json" with { type: "json" };
+import lenis from "./signatures/lenis.json" with { type: "json" };
 import lodash from "./signatures/lodash.json" with { type: "json" };
 import moment from "./signatures/moment.json" with { type: "json" };
 import preact from "./signatures/preact.json" with { type: "json" };
@@ -51,6 +54,8 @@ export type Signature = z.infer<typeof Signature>;
 
 /** Every signature file under `signatures/`. A test checks that none is missing from this list. */
 export const SIGNATURE_FILES: unknown[] = [
+  rapier,
+  r3f,
   axios,
   chartJs,
   coreJs,
@@ -59,6 +64,7 @@ export const SIGNATURE_FILES: unknown[] = [
   framerMotion,
   gsap,
   jquery,
+  lenis,
   lodash,
   moment,
   preact,

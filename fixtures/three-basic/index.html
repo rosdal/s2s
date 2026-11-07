@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>three-basic</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #101418;
+        color: #e8e8e8;
+        font: 16px/1.5 sans-serif;
+      }
+      canvas.webgl {
+        position: fixed;
+        inset: 0;
+        width: 100vw;
+        height: 100vh;
+        display: block;
+      }
+      section {
+        position: relative;
+        height: 100vh;
+        padding: 2rem;
+        box-sizing: border-box;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas class="webgl"></canvas>
+    <main id="content">
+      <section><h1>Hero</h1></section>
+      <section><h2>Closer</h2></section>
+      <section><h2>Above</h2></section>
+      <section><h2>Ground</h2></section>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

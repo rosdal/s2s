@@ -1,4 +1,5 @@
 import {
+  ASSET_MODES,
   type ScaffoldProgress,
   scaffold,
   TARGETS,
@@ -35,6 +36,20 @@ export const scaffoldArgs = {
     default: true,
     description: "git init and commit the scaffold (--no-git skips it)",
   },
+  assets: {
+    type: "string",
+    description:
+      "three.js models, textures and sounds: proxy (generated stand-ins, the default), clone (simplified originals, local study only) or original (as captured, local study only)",
+  },
+  "clone-ratio": {
+    type: "string",
+    description:
+      "With --assets clone: share of each static mesh's triangles to keep (0-1, default 0.25)",
+  },
+  "clone-texture": {
+    type: "string",
+    description: "With --assets clone: largest texture side in pixels (default 512)",
+  },
   force: { type: "boolean", description: "Regenerate even if the stage is complete" },
   json: { type: "boolean", description: "Print only the result as JSON" },
 } as const;
@@ -60,6 +75,34 @@ export function scaffoldRunner(io: CliIO, shared?: StageReporter) {
     if (args.target && !(TARGETS as readonly string[]).includes(args.target)) {
       io.stderr(`--target must be one of ${TARGETS.join(", ")}; got "${args.target}".`);
       return 2;
+    }
+    const recoverer: Record<string, unknown> = {};
+    if (args.assets !== undefined) {
+      if (!(ASSET_MODES as readonly string[]).includes(args.assets)) {
+        io.stderr(`--assets must be one of ${ASSET_MODES.join(", ")}; got "${args.assets}".`);
+        return 2;
+      }
+      recoverer.assets = args.assets;
+    }
+    if (args["clone-ratio"] !== undefined) {
+      const ratio = Number(args["clone-ratio"]);
+      if (!(ratio > 0 && ratio <= 1)) {
+        io.stderr(
+          `--clone-ratio must be a number above 0 and at most 1; got "${args["clone-ratio"]}".`,
+        );
+        return 2;
+      }
+      recoverer.cloneRatio = ratio;
+    }
+    if (args["clone-texture"] !== undefined) {
+      const size = Number(args["clone-texture"]);
+      if (!Number.isInteger(size) || size < 16) {
+        io.stderr(
+          `--clone-texture must be a whole number of pixels, at least 16; got "${args["clone-texture"]}".`,
+        );
+        return 2;
+      }
+      recoverer.cloneTexture = size;
     }
     const own = shared || args.json ? undefined : ownStage(io, "scaffold");
     const stage = shared ?? own?.stage;
@@ -90,6 +133,7 @@ export function scaffoldRunner(io: CliIO, shared?: StageReporter) {
         install: args.install !== false,
         build: args.build !== false,
         git: args.git !== false,
+        ...(Object.keys(recoverer).length > 0 ? { recoverer } : {}),
         signal: controller.signal,
         onProgress,
       });

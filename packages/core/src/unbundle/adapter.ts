@@ -132,15 +132,74 @@ export function callableClass(code: string): boolean {
   );
 }
 
+/**
+ * Classes that some code calls without `new`, which throws. un-es6-class can mistake a helper
+ * that assigns to a function's `prototype` (gsap's `_inheritsLoose`) for a constructor.
+ */
+export function classesCalledWithoutNew(code: string): Set<string> {
+  const out = new Set<string>();
+  let ast: ReturnType<typeof parseCode>;
+  try {
+    ast = parseCode(code);
+  } catch {
+    return out;
+  }
+  traverse(ast, {
+    CallExpression(p) {
+      const callee = p.node.callee;
+      if (callee.type !== "Identifier") return;
+      const binding = p.scope.getBinding(callee.name);
+      if (binding?.path.isClassDeclaration() || binding?.path.isClassExpression())
+        out.add(callee.name);
+    },
+  });
+  return out;
+}
+
+/**
+ * Classes read before their declaration in the same function body (`e.Buffer = u` above
+ * buffer's `function u(…)`): a function declaration is hoisted, a class is not, so un-es6-class
+ * turning one into the other throws on load.
+ */
+export function classesReadBeforeDeclared(code: string): Set<string> {
+  const out = new Set<string>();
+  let ast: ReturnType<typeof parseCode>;
+  try {
+    ast = parseCode(code);
+  } catch {
+    return out;
+  }
+  traverse(ast, {
+    ClassDeclaration(p) {
+      const name = p.node.id?.name;
+      const binding = name ? p.scope.getBinding(name) : undefined;
+      if (!name || !binding) return;
+      const home = p.getFunctionParent();
+      const at = p.node.start ?? 0;
+      if (
+        binding.referencePaths.some(
+          (r) => (r.node.start ?? 0) < at && r.getFunctionParent() === home,
+        )
+      )
+        out.add(name);
+    },
+  });
+  return out;
+}
+
 async function guardedWakaru(code: string, rules: readonly string[]): Promise<string> {
   const before = freeNames(code);
   if (!before) return runWakaru(code, rules);
+  const calledBefore = classesCalledWithoutNew(code);
+  const earlyBefore = classesReadBeforeDeclared(code);
   const ok = (out: string) => {
     const after = freeNames(out);
     return (
       after !== undefined &&
       [...after].every((n) => before.has(n)) &&
-      !(callableClass(out) && !callableClass(code))
+      !(callableClass(out) && !callableClass(code)) &&
+      [...classesCalledWithoutNew(out)].every((n) => calledBefore.has(n)) &&
+      [...classesReadBeforeDeclared(out)].every((n) => earlyBefore.has(n))
     );
   };
   const all = await runWakaru(code, rules);

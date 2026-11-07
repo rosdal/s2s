@@ -485,7 +485,8 @@ export class PackageReader {
     }
     const found: { name: string; file: number; at: number }[] = [];
     for (const name of names) {
-      const re = new RegExp(`\\b(?:const|let|var|function)\\s+${name.replace(/\$/g, "\\$")}\\b`);
+      const escaped = name.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+      const re = new RegExp(`\\b(?:const|let|var|function)\\s+${escaped}(?![\\w$])`);
       let hit: { name: string; file: number; at: number } | undefined;
       for (const [i, file] of files.entries()) {
         const at = (await readFile(file, "utf8").catch(() => "")).search(re);

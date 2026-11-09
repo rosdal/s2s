@@ -239,7 +239,18 @@
     "core-js-pure",
     "@babel/runtime",
     "regenerator-runtime",
-    "tslib"
+    "tslib",
+    "@dimforge/rapier3d",
+    "@dimforge/rapier3d-compat",
+    "cannon-es",
+    "@react-three/cannon",
+    "@pmndrs/cannon-worker-api",
+    "tweakpane",
+    "@tweakpane/plugin-essentials",
+    "@tweakpane/plugin-camerakit",
+    "seedrandom",
+    "camera-controls",
+    "stats-gl"
   ],
   "scopes": ["@radix-ui", "@floating-ui", "@dnd-kit", "@vueuse"]
 }

@@ -350,12 +350,13 @@ function chooseVersion(
   }
   const best = Math.max(0, ...scores.values());
   if (best === 0) {
-    // Nothing tells versions apart. With one version indexed (a local overlay pinned to a
-    // release), that version is the answer; otherwise there is no version to report.
-    const only = all.size === 1 && hits.some((h) => h.owners?.has(name)) ? [...all] : [];
-    return only.length === 1
-      ? { version: only[0] as string, candidates: only, confident: true }
-      : { version: null, candidates: [], confident: false };
+    // Nothing tells versions apart: every hit is in every indexed version. The answer is all of
+    // them, one version for an overlay pinned to a release, or the range that covers them
+    // (`0.19.x` for patch releases that ship the same code).
+    if (!hits.some((h) => h.owners?.has(name)))
+      return { version: null, candidates: [], confident: false };
+    const candidates = [...all].sort(compareVersions);
+    return { ...describeVersions(candidates), candidates };
   }
   const candidates = [...scores]
     .filter(([, s]) => s >= best - 1e-9)

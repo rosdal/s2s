@@ -37,6 +37,7 @@ import {
   shaderBaseName,
 } from "../src/webgl/shaders.js";
 import {
+  alignNodes,
   decodeSnapshot,
   diffSnapshots,
   encodeSnapshot,
@@ -512,5 +513,38 @@ describe("classesReadBeforeDeclared", () => {
     expect([...classesReadBeforeDeclared("function f() { return new u(); } class u {}")]).toEqual(
       [],
     );
+  });
+});
+
+describe("alignNodes", () => {
+  const node = (path: string, parent: string | null, position: number[], source?: string) =>
+    ({
+      path,
+      name: null,
+      type: path === "Scene" ? "Scene" : "Mesh",
+      parent,
+      visible: true,
+      position,
+      quaternion: [0, 0, 0, 1],
+      scale: [1, 1, 1],
+      ...(source ? { source } : {}),
+    }) as never;
+  test("unnamed siblings added in another order pair by likeness, not by index", () => {
+    const want = [
+      node("Scene", null, [0, 0, 0]),
+      node("Scene/Mesh#0", "Scene", [0, 0, 0], "/a.glb"),
+      node("Scene/Mesh#1", "Scene", [5, 0, 0], "/b.glb"),
+    ];
+    const got = [
+      node("Scene", null, [0, 0, 0]),
+      node("Scene/Mesh#0", "Scene", [5, 0, 0], "/b.glb"),
+      node("Scene/Mesh#1", "Scene", [0, 0, 0], "/a.glb"),
+    ];
+    const out = alignNodes(want, got) as { path: string; source?: string }[];
+    expect(out.map((n) => [n.path, n.source ?? null])).toEqual([
+      ["Scene", null],
+      ["Scene/Mesh#1", "/b.glb"],
+      ["Scene/Mesh#0", "/a.glb"],
+    ]);
   });
 });

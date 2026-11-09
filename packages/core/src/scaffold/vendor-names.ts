@@ -501,6 +501,24 @@ export class PackageReader {
     return found.sort((a, b) => a.file - b.file || a.at - b.at).map((f) => f.name);
   }
 
+  #exporters: Promise<Map<string, string[]>> | undefined;
+
+  /** The specifiers (entry and subpaths) that export `name`, from one pass over the package. */
+  async exporters(name: string): Promise<string[]> {
+    this.#exporters ??= (async () => {
+      const index = new Map<string, string[]>();
+      const add = async (specifier: string, file: string) => {
+        for (const exported of (await this.exportsOf(file)).keys())
+          index.set(exported, [...(index.get(exported) ?? []), specifier]);
+      };
+      const entry = await this.entry();
+      if (entry) await add(this.name, entry);
+      for (const [specifier, file] of await this.subpaths([])) await add(specifier, file);
+      return index;
+    })();
+    return (await this.#exporters).get(name) ?? [];
+  }
+
   /** The browser ESM entry. */
   async entry(): Promise<string | undefined> {
     const pkg = await this.manifest();
@@ -762,6 +780,13 @@ export async function nameVendorBindings(
           }
       }
     }
+    // An unminified bundle keeps the library's own names (`ColorManagement$1`, `uniform$1`): the
+    // name without the bundler's `$n` suffix, exported by the package, beats any shape.
+    const named = await exportedAs(local, own, readerOf);
+    if (named) {
+      resolved.set(local, named);
+      return;
+    }
     const shape = shapeOf(decl);
     for (const pkg of own) {
       const hit =
@@ -806,6 +831,9 @@ export async function nameVendorBindings(
   const copies = new Map<string, string>();
   // Helpers copied only as another copy's dependency, declared before the alias that needs them.
   const helpers = new Map<string, string>();
+  // Names the copies import from a package instead of copying.
+  const copyImports = new Map<string, Resolution>();
+  const importedSupers = new Set<string>();
   const before = new Map<t.VariableDeclaration, string[]>();
   // Copies that run on load (a call), and where each top-level name of the module is declared.
   const eager = new Set<string>();
@@ -822,9 +850,13 @@ export async function nameVendorBindings(
   }
   if (bundleCode) {
     const own = new Set<string>();
+    const importedNames = new Set<string>();
     for (const node of ast.program.body) {
       if (node.type === "ImportDeclaration") {
-        for (const sp of node.specifiers) own.add(sp.local.name);
+        for (const sp of node.specifiers) {
+          own.add(sp.local.name);
+          importedNames.add(sp.local.name);
+        }
       } else if (node.type === "VariableDeclaration") {
         for (const d of node.declarations) if (d.id.type === "Identifier") own.add(d.id.name);
       } else if (
@@ -837,13 +869,17 @@ export async function nameVendorBindings(
     const helperText = (name: string): string | null => {
       if (notCopied.has(name)) return null;
       const decl = bundle.get(name);
-      // A class without `extends` is as lazy as a function (`class Semver {…}`).
+      // A class is as lazy as a function (`class Semver {…}`) when it extends nothing, or a class
+      // this module imports (`extends TempNode`), which is bound before any of the module runs.
+      const imported = (n: t.Node | null | undefined) =>
+        n?.type === "Identifier" &&
+        (importedNames.has(n.name) || resolved.has(n.name) || importedSupers.has(n.name));
       const fn =
         decl?.type === "ArrowFunctionExpression" ||
         decl?.type === "FunctionExpression" ||
         decl?.type === "FunctionDeclaration" ||
         ((decl?.type === "ClassDeclaration" || decl?.type === "ClassExpression") &&
-          !decl.superClass);
+          (!decl.superClass || imported(decl.superClass)));
       // `var _w = Object.prototype.hasOwnProperty`: a global's member, safe to read again.
       const globalMember = (n: t.Node): boolean =>
         n.type === "MemberExpression"
@@ -875,7 +911,28 @@ export async function nameVendorBindings(
     };
     // The helper and the bundle helpers it reads that this module lacks (`__spreadValues` reads
     // `__defNormalProp`), dependencies first; null when any of them can't be copied.
-    const closure = (name: string, stack: Set<string>): string[] | null => {
+    // A library binding the copy reads under its own name (`nodeObject$1` is three/tsl's
+    // `nodeObject`): imported rather than copied.
+    const byName = (local: string) => exportedAs(local, pkgs, readerOf);
+    const closure = async (
+      name: string,
+      stack: Set<string>,
+      imports: Map<string, Resolution>,
+    ): Promise<string[] | null> => {
+      // `class CheapDOFNode extends Node$1`: a base class read under its library name is imported.
+      const d = bundle.get(name);
+      const sup =
+        (d?.type === "ClassDeclaration" || d?.type === "ClassExpression") &&
+        d.superClass?.type === "Identifier"
+          ? d.superClass.name
+          : null;
+      if (sup && !own.has(sup) && !importedSupers.has(sup)) {
+        const hit = copyImports.get(sup) ?? imports.get(sup) ?? (await byName(sup));
+        if (hit) {
+          imports.set(sup, hit);
+          importedSupers.add(sup);
+        }
+      }
       const text = helperText(name);
       const free = text === null ? null : freeNames(text);
       if (!free) return null;
@@ -883,7 +940,14 @@ export async function nameVendorBindings(
       for (const n of free) {
         if (n === name || own.has(n) || !bundle.has(n) || stack.has(n) || order.includes(n))
           continue;
-        const sub = closure(n, new Set([...stack, name]));
+        if (imports.has(n) || copyImports.has(n)) continue;
+        // The library's own export first: a copy would be a second instance of its internals.
+        const hit = await byName(n);
+        if (hit) {
+          imports.set(n, hit);
+          continue;
+        }
+        const sub = await closure(n, new Set([...stack, name]), imports);
         if (!sub || order.length + sub.length > MAX_COPIED_DEPS) return null;
         for (const x of sub) if (!order.includes(x)) order.push(x);
       }
@@ -893,8 +957,10 @@ export async function nameVendorBindings(
     for (const a of aliases)
       for (const p of a.parts) {
         if (!p.ns || !p.id || resolved.has(p.id)) continue;
-        const order = closure(p.id, new Set());
+        const imports = new Map<string, Resolution>();
+        const order = await closure(p.id, new Set(), imports);
         if (!order) continue;
+        for (const [n, r] of imports) copyImports.set(n, r);
         for (const n of order) {
           if (n === p.id || own.has(n)) continue;
           helpers.set(n, helperText(n) as string);
@@ -986,6 +1052,27 @@ export async function nameVendorBindings(
   }
   for (const { name, at } of lateEager)
     edits.push({ start: at, end: at, text: `\nconst ${name} = ${helpers.get(name) as string};` });
+  // What the copies import (imports are hoisted, so the top of the file serves every copy).
+  const bySpecifier = new Map<string, string[]>();
+  for (const [local, r] of copyImports) {
+    bySpecifier.set(r.specifier, [
+      ...(bySpecifier.get(r.specifier) ?? []),
+      `${r.name} as ${local}`,
+    ]);
+    named.push({
+      package: r.specifier,
+      local,
+      specifier: r.specifier,
+      export: r.name,
+      score: r.score,
+    });
+  }
+  if (bySpecifier.size > 0)
+    edits.push({
+      start: 0,
+      end: 0,
+      text: `${[...bySpecifier].map(([spec, names]) => `import { ${names.join(", ")} } from ${JSON.stringify(spec)};`).join("\n")}\n`,
+    });
   for (const [local, { pkg, node }] of namespaces) {
     const lines: string[] = [];
     const bySpec = new Map<string, string[]>();
@@ -1073,6 +1160,32 @@ async function byOrder(
   if (!positions) return null;
   const name = positions[at];
   return name ? { specifier: reader.name, name, score: 1 } : null;
+}
+
+/** Shortest kept name trusted as a library's own (minified names are one or two letters). */
+const MIN_NAME_LENGTH = 4;
+
+/**
+ * The export a binding stands for by its own name, in an unminified bundle: the name without the
+ * bundler's `$n` suffixes, exported by one of `pkgs` (its entry first, then the shortest other
+ * entry: `vec3` is `three/tsl`'s). A suffixed name (`If$1`) is the bundler renaming an original,
+ * so any length counts; a bare one must be long enough not to be a minified name.
+ */
+async function exportedAs(
+  local: string,
+  pkgs: string[],
+  readerOf: (pkg: string) => PackageReader,
+): Promise<Resolution | null> {
+  const base = local.replace(/(\$\d+)+$/, "");
+  if (!/^[A-Za-z_]/.test(base) || (base === local && base.length < MIN_NAME_LENGTH)) return null;
+  for (const pkg of pkgs) {
+    const specifiers = await readerOf(pkg).exporters(base);
+    const pick = specifiers.includes(pkg)
+      ? pkg
+      : [...specifiers].sort((a, b) => a.length - b.length)[0];
+    if (pick) return { specifier: pick, name: base, score: 1 };
+  }
+  return null;
 }
 
 /** Longest helper copied from the bundle, in characters. */

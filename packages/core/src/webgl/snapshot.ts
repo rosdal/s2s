@@ -247,7 +247,8 @@ export function diffSnapshots(
     (options.ignoreTransforms ?? []).some((q) => p === q || p.startsWith(`${q}/`));
   const pairs = pairScenes(expected.scenes, actual.scenes);
   for (const [i, scene] of expected.scenes.entries()) {
-    const other = pairs.get(i);
+    const paired = pairs.get(i);
+    const other = paired && { ...paired, nodes: alignNodes(scene.nodes, paired.nodes) };
     if (!other) {
       lines.push(`Scene ${scene.name}: missing`);
       stats.missing += scene.nodes.length;
@@ -310,9 +311,9 @@ export function diffSnapshots(
         lines.push(`${n.path}: not in the capture`);
       }
   }
-  const paired = new Set(pairs.values());
+  const pairedScenes = new Set(pairs.values());
   for (const scene of actual.scenes)
-    if (!paired.has(scene)) lines.push(`Scene ${scene.name}: not in the capture`);
+    if (!pairedScenes.has(scene)) lines.push(`Scene ${scene.name}: not in the capture`);
   const max = options.maxLines ?? 50;
   const differences =
     lines.length > max ? [...lines.slice(0, max), `… and ${lines.length - max} more`] : lines;
@@ -358,4 +359,81 @@ export function pairScenes<T extends { name: string; nodes: { path: string }[] }
     taken.add(c.a);
   }
   return out;
+}
+
+/** The last path segment without its `#n` index: unnamed siblings share it (`Mesh`). */
+/** A parent no capture node has, for the children of a rebuilt node the capture lacks. */
+const NO_PARENT = "\u0000";
+
+const baseOf = (path: string) => (path.split("/").pop() ?? "").replace(/#\d+$/, "");
+
+/**
+ * Rebuilt nodes renamed to the capture's paths. Unnamed siblings get their `#n` from the order they
+ * were added, and a site that loads models in parallel adds them in whatever order they arrive.
+ * Among siblings of one parent, type and base name, each capture node takes the rebuilt node most
+ * like it: same source asset, bounds, child count and transform.
+ */
+export function alignNodes(expected: SnapshotNode[], actual: SnapshotNode[]): SnapshotNode[] {
+  const kids = (nodes: SnapshotNode[]) => {
+    const out = new Map<string | null, SnapshotNode[]>();
+    for (const n of nodes) out.set(n.parent, [...(out.get(n.parent) ?? []), n]);
+    return out;
+  };
+  const wantKids = kids(expected);
+  const gotKids = kids(actual);
+  const size = (n: SnapshotNode) => {
+    const b = n.geometry?.bounds;
+    return b ? Math.hypot(...b[1].map((v, k) => v - (b[0][k] ?? 0))) : 0;
+  };
+  const cost = (e: SnapshotNode, a: SnapshotNode) =>
+    (e.source !== a.source ? 100 : 0) +
+    Math.abs(size(e) - size(a)) +
+    Math.abs((wantKids.get(e.path)?.length ?? 0) - (gotKids.get(a.path)?.length ?? 0)) * 10 +
+    dist(e.position, a.position) +
+    dist(e.scale, a.scale);
+  const renamed = new Map<SnapshotNode, string>();
+  const visit = (
+    wantParent: string | null,
+    gotParent: string | null,
+    parentPath: string | null,
+  ) => {
+    const want = wantKids.get(wantParent) ?? [];
+    const got = gotKids.get(gotParent) ?? [];
+    const groups = new Set([...want, ...got].map((n) => `${n.type}|${baseOf(n.path)}`));
+    for (const key of groups) {
+      const w = want.filter((n) => `${n.type}|${baseOf(n.path)}` === key);
+      const g = got.filter((n) => `${n.type}|${baseOf(n.path)}` === key);
+      const pairs = w
+        .flatMap((e) => g.map((a) => ({ e, a, c: cost(e, a) })))
+        .sort((x, y) => x.c - y.c);
+      const usedW = new Set<SnapshotNode>();
+      const usedG = new Set<SnapshotNode>();
+      for (const { e, a } of pairs) {
+        if (usedW.has(e) || usedG.has(a)) continue;
+        usedW.add(e);
+        usedG.add(a);
+        renamed.set(a, e.path);
+        visit(e.path, a.path, e.path);
+      }
+      for (const a of g) {
+        if (usedG.has(a)) continue;
+        const seg = a.path.split("/").pop() ?? "";
+        // Its own name, unless a capture node of this group took it.
+        const own = `${parentPath === null ? "" : `${parentPath}/`}${seg}`;
+        const path = w.some((e) => e.path === own) ? `${own}~` : own;
+        renamed.set(a, path);
+        // Nothing in the capture under a node it lacks: its children keep their own names.
+        visit(NO_PARENT, a.path, path);
+      }
+    }
+  };
+  visit(null, null, null);
+  return actual.map((n) => {
+    const path = renamed.get(n) ?? n.path;
+    const parent =
+      n.parent === null
+        ? null
+        : (renamed.get(actual.find((x) => x.path === n.parent) as SnapshotNode) ?? n.parent);
+    return { ...n, path, parent };
+  });
 }

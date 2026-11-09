@@ -21,3 +21,6 @@ docs/todo/
 packages/fingerprints/corpus/candidates.json
 bench/.work*/
 bench/results*.details.json
+
+# Impeccable hook cache
+.impeccable/hook.cache.json

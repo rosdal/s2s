@@ -55,6 +55,13 @@ interface Unit {
 }
 
 /**
+ * The largest run of kept statements `absorbWedged` takes for the surrounding package's. three's
+ * own leftovers reach 40 KB (three-compressed); a site's code between two library ranges runs to
+ * hundreds of kilobytes (bruno-simon.com).
+ */
+const WEDGED_MAX_BYTES = 128 * 1024;
+
+/**
  * In a scope-hoisted bundle a library is one stretch of statements; the fingerprint index can miss
  * some of them, which leaves library internals in the site's code. A run of kept statements
  * between two dropped statements of the same package is that package's own code when it assigns
@@ -82,7 +89,10 @@ export function absorbWedged(units: Unit[]): void {
       while (j < units.length && !(units[j] as Unit).dropped) j++;
       const after = units[j]?.dropped;
       const run = units.slice(i, j);
-      if (after?.package === before.package && run.every((u) => u.exported.length === 0)) {
+      // A library's leftovers are a few statements; hundreds of kilobytes between two of its
+      // ranges are the site's own code, however one of them touches the library.
+      const small = run.reduce((n, u) => n + u.bytes, 0) <= WEDGED_MAX_BYTES;
+      if (small && after?.package === before.package && run.every((u) => u.exported.length === 0)) {
         const inRun = new Set(run.map((u) => u.index));
         const ofPackage = (k: number) => units[k]?.dropped?.package === before.package;
         const writesPackage = run.some((u) => [...u.writes].some(ofPackage));
@@ -177,6 +187,16 @@ export function absorbBuiltFrom(units: Unit[]): void {
   }
 }
 
+function declaresClassOrFunction(node: t.Statement): boolean {
+  if (node.type === "ClassDeclaration" || node.type === "FunctionDeclaration") return true;
+  const init = node.type === "VariableDeclaration" ? node.declarations[0]?.init : undefined;
+  return (
+    init?.type === "ClassExpression" ||
+    init?.type === "FunctionExpression" ||
+    init?.type === "ArrowFunctionExpression"
+  );
+}
+
 /**
  * A dropped statement whose binding kept code assigns (`_zstd ||= …`) or mutates through a member
  * (`internals.priority = 4`) stays: an import is read-only, so the binding must be the module's
@@ -192,6 +212,9 @@ export function keepWritten(units: Unit[]): void {
         if (!owner?.dropped) continue;
         // An exported statement is reached from other chunks through the vendor import instead.
         if (owner.exported.length === 0) {
+          // `Node.captureStackTrace = true` sets a static on a library class: legal on its named
+          // import, so the class (three's whole `Node`) needn't come back as site code.
+          if (!unit.writes.has(target) && declaresClassOrFunction(owner.node)) continue;
           owner.dropped = null;
           changed = true;
         } else if (

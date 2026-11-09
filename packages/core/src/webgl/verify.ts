@@ -213,6 +213,15 @@ export async function webglChecks(input: {
             async (k) => {
               const want = captured.get(k.keyframe.id);
               const differences: string[] = [];
+              // The rebuilt scene, next to the capture's, for whoever fixes the differences.
+              if (k.snapshot)
+                await writeFileAtomic(
+                  path.join(
+                    paths.root,
+                    `verify/current/webgl/${page.slug}/${v.viewport}/${k.keyframe.id}.json`,
+                  ),
+                  `${JSON.stringify(k.snapshot, null, 1)}\n`,
+                );
               if (want && !k.snapshot) differences.push("no three.js scene reported itself");
               if (want && k.snapshot)
                 differences.push(...(compare(k.keyframe.id, k.snapshot)?.differences ?? []));

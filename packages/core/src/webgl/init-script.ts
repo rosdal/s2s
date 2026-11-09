@@ -154,6 +154,19 @@ function INIT(cfg: { seed: number | null; full: boolean }): void {
     }
   } catch {}
 
+  // The deterministic pass renders through SwiftShader's WebGL, the same on every machine and
+  // every browser build. Whether WebGPU is on offer differs by build, and three's WebGPURenderer
+  // takes it when it is, so the capture and its replay could render through different backends.
+  // Without `navigator.gpu` it falls back to WebGL in both. Detection's light probe keeps it.
+  if (cfg.full) {
+    try {
+      Object.defineProperty(Navigator.prototype, "gpu", {
+        get: () => undefined,
+        configurable: true,
+      });
+    } catch {}
+  }
+
   if (cfg.full) {
     for (const Ctx of [w.WebGLRenderingContext, w.WebGL2RenderingContext]) {
       if (!Ctx) continue;

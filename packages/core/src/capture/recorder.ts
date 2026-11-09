@@ -129,7 +129,16 @@ export class Recorder {
       let size: number | null = null;
       let note = failure;
       if (response && !redirectedTo && status !== 204 && status !== 304) {
-        const body = await response.body().catch(() => undefined);
+        let body = await response.body().catch(() => undefined);
+        if (body?.byteLength === 0 && expectsBody(request.method(), responseHeaders)) {
+          // Chromium hands Playwright an empty body when the page read the response with
+          // `.blob()` (three.js's ImageBitmapLoader does). Ask for the URL again instead of
+          // storing a body that can't be the real one.
+          body = await this.#refetch(request, requestHeaders);
+          note = body
+            ? note
+            : "body not stored: the browser returned an empty body and fetching it again failed";
+        }
         if (body) {
           size = body.byteLength;
           if (body.byteLength > this.#maxBodyBytes) {
@@ -187,6 +196,49 @@ export class Recorder {
       // The context closed while this response was being read (Ctrl+C or page close).
     }
   }
+
+  /** Fetch a request's URL again through its own browser context, or undefined on any failure. */
+  async #refetch(request: Request, headers: Record<string, string>): Promise<Buffer | undefined> {
+    const context = (() => {
+      try {
+        return request.frame().page()?.context();
+      } catch {
+        return undefined; // Service-worker requests have no frame.
+      }
+    })();
+    if (!context) return undefined;
+    try {
+      const response = await context.request.get(request.url(), {
+        headers: Object.fromEntries(
+          Object.entries(headers).filter(([name]) => !name.startsWith(":") && !SKIP[name]),
+        ),
+        failOnStatusCode: false,
+        maxRedirects: 0,
+      });
+      if (!response.ok()) return undefined;
+      const body = await response.body();
+      return body.byteLength > 0 ? body : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+}
+
+/** Request headers the refetch leaves to Playwright: framing, and conditionals that yield a 304. */
+const SKIP: Record<string, true> = {
+  "content-length": true,
+  connection: true,
+  host: true,
+  "if-modified-since": true,
+  "if-none-match": true,
+  range: true,
+};
+
+/** An empty body is only genuine on a GET whose response doesn't declare a non-zero length. */
+export function expectsBody(method: string, headers: Record<string, string>): boolean {
+  if (method !== "GET") return false;
+  const length = headers["content-length"];
+  return length === undefined || Number(length) > 0;
 }
 
 export function sleep(ms: number, signal?: AbortSignal): Promise<void> {

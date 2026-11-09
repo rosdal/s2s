@@ -1,11 +1,14 @@
 import { existsSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { type BrowserContext, request } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { type CaptureOptions, capture, RobotsDisallowedError } from "../src/capture/capture.js";
 import { readManifest } from "../src/capture/manifest.js";
+import { expectsBody } from "../src/capture/recorder.js";
 import { type RequestRecord, readRequestLog } from "../src/capture/request-log.js";
 import { RobotsCache } from "../src/capture/robots.js";
 import { workspacePaths } from "../src/capture/workspace.js";
@@ -438,5 +441,43 @@ describe("hostile fixture", () => {
       "/private/secret.html",
     );
     expect(result.status).toBe("complete");
+  });
+});
+
+describe("responses the page reads as a blob", () => {
+  const image = Buffer.alloc(4_096, 7);
+  const server = createServer((req, res) => {
+    if (req.url === "/") {
+      res.setHeader("content-type", "text/html");
+      res.end(
+        "<!doctype html><title>blob</title><script>fetch('/tile.jpg').then((r) => r.blob())</script>",
+      );
+      return;
+    }
+    res.setHeader("content-type", "image/jpeg");
+    res.setHeader("content-length", image.length);
+    res.end(image);
+  });
+  let url: string;
+  beforeAll(async () => {
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+  });
+  afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
+
+  test("stores the real body, not the empty one Chromium reports", async () => {
+    const { records, paths } = await run({ url, root: "", close: async () => {} }, "blob");
+    const tile = records.find((r) => pathOf(r.url) === "/tile.jpg");
+    expect(tile?.resourceType).toBe("fetch");
+    expect(tile?.size).toBe(image.length);
+    expect(tile?.bodyHash).toBeTruthy();
+    expect(await readFile(path.join(paths.bodies, tile?.bodyHash ?? ""))).toEqual(image);
+  });
+
+  test("treats an empty body as genuine only when nothing says otherwise", () => {
+    expect(expectsBody("GET", { "content-length": "4096" })).toBe(true);
+    expect(expectsBody("GET", {})).toBe(true);
+    expect(expectsBody("GET", { "content-length": "0" })).toBe(false);
+    expect(expectsBody("POST", { "content-length": "12" })).toBe(false);
   });
 });

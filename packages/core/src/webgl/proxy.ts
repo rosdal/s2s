@@ -173,6 +173,21 @@ export interface ProxyReport {
   skinsDropped: number;
 }
 
+/**
+ * Grow `geo` to `count` vertices by repeating its own, without new triangles. Site code often
+ * loops over a model's vertices (particles seeded with `Math.random()` per vertex, say), so a
+ * proxy with fewer vertices shifts the seeded random sequence and everything placed after it.
+ */
+export function padVertices(geo: Geo, count: number): void {
+  const own = geo.pos.length / 3;
+  for (let i = own; i < count; i++) {
+    const from = i % own;
+    geo.pos.push(...geo.pos.slice(3 * from, 3 * from + 3));
+    geo.nor.push(...geo.nor.slice(3 * from, 3 * from + 3));
+    geo.uv.push(...geo.uv.slice(2 * from, 2 * from + 2));
+  }
+}
+
 function replaceGeometry(doc: Document, prim: Primitive): ProxyShape {
   const position = prim.getAttribute("POSITION");
   // Quantized positions store normalized integers; their bounds are read normalized.
@@ -184,6 +199,7 @@ function replaceGeometry(doc: Document, prim: Primitive): ProxyShape {
     0.5, 0.5, 0.5,
   ];
   const fitted = fittedShape(min, max);
+  padVertices(fitted.geo, position?.getCount() ?? 0);
   for (const semantic of prim.listSemantics()) prim.setAttribute(semantic, null);
   for (const target of prim.listTargets()) prim.removeTarget(target);
   const buffer = doc.getRoot().listBuffers()[0] ?? doc.createBuffer();

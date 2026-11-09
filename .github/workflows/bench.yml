@@ -34,7 +34,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @rosdal/s2s-core --filter @rosdal/s2s-fingerprints run build
-      - uses: actions/cache@v5
+      - uses: actions/cache@v6
         with:
           path: .fingerprint-cache
           key: bench-subset-${{ hashFiles('packages/fingerprints/corpus/corpus.lock.json', 'packages/core/src/fingerprint/normalize.ts', 'packages/fingerprints/src/**') }}
@@ -47,7 +47,7 @@ jobs:
         run: >
           node bench/run.mjs --index bench/.work/subset.sqlite --pool "$SUBSET" --apps 4 --seed 1
           --builds esbuild,heldout --out bench/.work/results-ci.json --compare bench/results-ci.json
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: bench-subset
@@ -78,7 +78,7 @@ jobs:
         run: >
           node bench/run.mjs --index "$(ls $S2S_CACHE_DIR/fingerprints/fingerprints-*.sqlite | tail -1)"
           --apps 30 --seed 1 --out bench/.work/results.json --compare bench/results.json
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: bench-nightly

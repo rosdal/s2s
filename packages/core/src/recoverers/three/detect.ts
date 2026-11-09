@@ -27,7 +27,10 @@ export const COMPANION_MARKERS: Record<string, RegExp> = {
   howler: /howler\.js|Howler/,
 };
 
-const PHYSICS = ["@dimforge/rapier3d-compat", "cannon-es", "ammo"];
+const PHYSICS = ["@dimforge/rapier3d-compat", "@dimforge/rapier3d", "cannon-es", "ammo"];
+
+/** Rapier's two builds share their markers; the one Stage 3 accepted says which this is. */
+const RAPIER = ["@dimforge/rapier3d-compat", "@dimforge/rapier3d"];
 
 const WEBGPU =
   /getContext\(\s*["']webgpu["']\)|navigator\.gpu\.requestAdapter|WebGPURenderer|@fragment\s+fn |var<uniform>/;
@@ -96,6 +99,11 @@ export async function threeSignals(ctx: RecovererContext): Promise<ThreeSignals>
   // Packages Stage 3 accepted are better evidence than markers.
   for (const p of ctx.packages)
     if (p.name in COMPANION_MARKERS && p.status !== "rejected") companions.add(p.name);
+  const rapier = ctx.packages.find((p) => RAPIER.includes(p.name) && p.status === "dependency");
+  if (rapier && companions.has("@dimforge/rapier3d-compat")) {
+    for (const name of RAPIER) companions.delete(name);
+    companions.add(rapier.name);
+  }
   const decoders = new Set<string>();
   for (const r of ctx.requests)
     for (const tag of r.tags ?? []) if (tag.startsWith("decoder:")) decoders.add(tag.slice(8));

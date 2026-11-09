@@ -9,6 +9,18 @@ export const TARGET_DEV_DEPENDENCIES: Record<Target, Record<string, string>> = {
   vanilla: { typescript: "^7.0.2", vite: "^8.3.5" },
 };
 
+/**
+ * Packages that import their `.wasm` as an ES module (wasm-bindgen's bundler target), which Vite
+ * builds only with `vite-plugin-wasm`, as the sites that ship them do.
+ */
+const WASM_ESM_PACKAGES = new Set(["@dimforge/rapier2d", "@dimforge/rapier3d"]);
+const WASM_PLUGIN = { "vite-plugin-wasm": "^3.6.0" };
+
+/** Whether the project needs `vite-plugin-wasm`. */
+export function needsWasmPlugin(pkg: PackageJson): boolean {
+  return Object.keys(pkg.dependencies ?? {}).some((name) => WASM_ESM_PACKAGES.has(name));
+}
+
 /** The site's original bundler and its CLI; the scaffold builds with Vite instead. */
 const ORIGINAL_BUNDLERS = new Set([
   "webpack",
@@ -25,7 +37,11 @@ export function scaffoldPackageJson(pkg: PackageJson, target: Target): PackageJs
   const dev = Object.fromEntries(
     Object.entries(pkg.devDependencies ?? {}).filter(([name]) => !ORIGINAL_BUNDLERS.has(name)),
   );
-  for (const [name, range] of Object.entries(TARGET_DEV_DEPENDENCIES[target]))
+  const needed = {
+    ...TARGET_DEV_DEPENDENCIES[target],
+    ...(needsWasmPlugin(pkg) ? WASM_PLUGIN : {}),
+  };
+  for (const [name, range] of Object.entries(needed))
     if (!(name in (pkg.dependencies ?? {}))) dev[name] ??= range;
   // Strict TSX needs React's types; match the major the site runs.
   if (target === "react") {
@@ -62,13 +78,23 @@ export interface ProjectAlias {
 
 const regexSource = (text: string) => text.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 
-export function viteConfig(target: Target, aliases: ProjectAlias[] = []): string {
-  const plugin = {
+export function viteConfig(
+  target: Target,
+  aliases: ProjectAlias[] = [],
+  options: { wasm?: boolean } = {},
+): string {
+  const framework = {
     react: { imp: 'import react from "@vitejs/plugin-react";\n', use: "react()" },
     vue: { imp: 'import vue from "@vitejs/plugin-vue";\n', use: "vue()" },
     preact: { imp: 'import preact from "@preact/preset-vite";\n', use: "preact()" },
     vanilla: { imp: "", use: "" },
   }[target];
+  const plugin = options.wasm
+    ? {
+        imp: `${framework.imp}import wasm from "vite-plugin-wasm";\n`,
+        use: [framework.use, "wasm()"].filter(Boolean).join(", "),
+      }
+    : framework;
   const entries = aliases.flatMap((a) => [
     `      { find: /^${regexSource(a.name)}$/, replacement: here(${JSON.stringify(a.entry)}) },`,
     `      { find: /^${regexSource(a.name)}\\//, replacement: here(${JSON.stringify(`${a.root}/`)}) },`,

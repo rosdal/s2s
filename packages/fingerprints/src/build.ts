@@ -19,7 +19,7 @@ import {
 } from "./variants.js";
 
 /** Bumped when bundling or the variants change, so cached results are rebuilt. */
-export const BUILDER_VERSION = "3";
+export const BUILDER_VERSION = "4";
 /**
  * Bumped only when bundling or minifying changes what an entry hashes to. Separate from
  * `BUILDER_VERSION`, so result-format changes reuse the expensive per-entry work.

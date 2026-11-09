@@ -305,6 +305,24 @@ ${lib("wrapper", 1)}`,
     }
   });
 
+  test("releases with identical code give the range that covers them, not no version", async () => {
+    // @dimforge/rapier3d 0.19.0–0.19.3: the same glue in every patch release.
+    const same = path.join(tmp, "same.sqlite");
+    await buildIndex(same, {
+      gamma: { "0.19.0": lib("gamma", 1), "0.19.1": lib("gamma", 1), "0.19.3": lib("gamma", 1) },
+    });
+    const index = FingerprintIndex.open(same);
+    try {
+      const result = await matchBundles([{ id: "b", url: "u", text: lib("gamma", 1) }], [index]);
+      const gamma = result.packages.find((p) => p.name === "gamma");
+      expect(gamma?.version).toBe("0.19.x");
+      expect(gamma?.confident).toBe(true);
+      expect(gamma?.candidates).toEqual(["0.19.0", "0.19.1", "0.19.3"]);
+    } finally {
+      index.close();
+    }
+  });
+
   test("a handful of shared functions is not presence", async () => {
     const index = FingerprintIndex.open(file);
     try {
@@ -372,6 +390,68 @@ ${lib("wrapper", 1)}`,
     const writer = new IndexWriter(dup);
     expect(writer.addPackage("alpha", [v, v])).toBe(1);
     writer.close();
+  });
+
+  test("replace rebuilds a version in place: an empty build no longer sticks", async () => {
+    const file = path.join(tmp, "replace.sqlite");
+    const one = await fingerprintCode(lib("alpha", 1));
+    const two = await fingerprintCode(lib("alpha", 2));
+    const v = (version: string, functions: bigint[]) => ({
+      name: "alpha",
+      version,
+      functions,
+      strings: [],
+    });
+    const writer = new IndexWriter(file);
+    writer.addPackage("alpha", [
+      v(
+        "1.0.0",
+        one.functions.map((f) => f.hash),
+      ),
+      v("2.0.0", []),
+    ]);
+    // Without replace the empty 2.0.0 stays; with it, 2.0.0 gets its hashes and 1.0.0 keeps its own.
+    expect(
+      writer.addPackage("alpha", [
+        v(
+          "2.0.0",
+          two.functions.map((f) => f.hash),
+        ),
+      ]),
+    ).toBe(0);
+    expect(
+      writer.addPackage(
+        "alpha",
+        [
+          v(
+            "2.0.0",
+            two.functions.map((f) => f.hash),
+          ),
+        ],
+        { replace: true },
+      ),
+    ).toBe(1);
+    writer.close();
+    const index = FingerprintIndex.open(file);
+    try {
+      const pkg = [...index.packages.values()].find((p) => p.name === "alpha");
+      expect(pkg?.versions).toEqual(["1.0.0", "2.0.0"]);
+      const hits = index.lookup(
+        "function",
+        two.functions.map((f) => f.hash),
+      );
+      const versionsOf = (h: bigint) =>
+        (hits.get(h) ?? []).flatMap((p) => bitIndices(p.versions).map((i) => pkg?.versions[i]));
+      const onlyTwo = two.functions
+        .map((f) => f.hash)
+        .filter((h) => !one.functions.some((f) => f.hash === h));
+      expect(onlyTwo.length).toBeGreaterThan(0);
+      for (const h of onlyTwo) expect(versionsOf(h)).toEqual(["2.0.0"]);
+      const unique = new Set([...one.functions, ...two.functions].map((f) => f.hash)).size;
+      expect(pkg?.functions).toBe(unique);
+    } finally {
+      index.close();
+    }
   });
 
   test("dropping a shared hash takes it off every owner's count", async () => {

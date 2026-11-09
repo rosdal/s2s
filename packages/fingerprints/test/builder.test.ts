@@ -341,4 +341,33 @@ export function titleCase(s){return s.split(" ").map(w=>w.charAt(0).toUpperCase(
     expect(result.functions.length).toBeGreaterThanOrEqual(2);
     expect(result.strings.length).toBe(1);
   });
+
+  test("fingerprints the JS glue of a package that imports its .wasm (wasm-bindgen bundler)", async () => {
+    // @dimforge/rapier3d's shape: the entry imports the binary as an ES module.
+    const glue = `import * as wasm from "./lib_bg.wasm";
+export function stepWorld(world,dt){if(typeof dt!=="number")throw new TypeError("stepWorld expects a number");return wasm.world_step(world.ptr,dt)}
+export function dropObject(idx){if(idx<132)return;heap[idx]=heapNext;heapNext=idx}
+const heap=new Array(128).fill(undefined);let heapNext=heap.length;`;
+    const bytes = tgz([
+      {
+        name: "package/package.json",
+        body: JSON.stringify({
+          name: "wasm-lib",
+          version: "1.0.0",
+          type: "module",
+          module: "./lib.js",
+        }),
+      },
+      { name: "package/lib.js", body: glue },
+      { name: "package/lib_bg.wasm", body: "\0asm\x01\0\0\0" },
+    ]);
+    const result = await buildVersion(
+      { name: "wasm-lib", version: "1.0.0", tarball: "", integrity: "" },
+      { cacheDir: path.join(tmp, "cache"), tarballBytes: bytes },
+    );
+    expect(result.entries.map((e) => [e.specifier, e.status, e.error])).toEqual([
+      ["wasm-lib", "ok", null],
+    ]);
+    expect(result.functions.length).toBeGreaterThanOrEqual(2);
+  });
 });

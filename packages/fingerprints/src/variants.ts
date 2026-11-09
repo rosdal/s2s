@@ -145,6 +145,9 @@ export async function bundleEntry(
         ".png": "empty",
         ".woff": "empty",
         ".woff2": "empty",
+        // wasm-bindgen's bundler target imports its binary as a module (`@dimforge/rapier3d`):
+        // the JS glue is what a site's bundle carries and what gets fingerprinted.
+        ".wasm": "empty",
       },
       logLevel: "silent",
       metafile: true,

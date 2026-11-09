@@ -368,12 +368,16 @@ export class IndexWriter {
     );
   }
 
-  /** Add every new version of one package in one transaction. */
-  addPackage(name: string, versions: VersionPrints[]): number {
+  /**
+   * Add every new version of one package in one transaction. With `replace`, a version already in
+   * the index is rebuilt in place (`s2s db build` after a builder fix) instead of skipped.
+   */
+  addPackage(name: string, versions: VersionPrints[], options: { replace?: boolean } = {}): number {
     const seen = new Set<string>();
     // New versions only, each once even when the caller listed it twice.
     const fresh = versions.filter((v) => {
-      if (v.name !== name || seen.has(v.version) || this.has(name, v.version)) return false;
+      if (v.name !== name || seen.has(v.version)) return false;
+      if (!options.replace && this.has(name, v.version)) return false;
       seen.add(v.version);
       return true;
     });
@@ -400,13 +404,30 @@ export class IndexWriter {
       const insertVersion = this.#db.prepare(
         "INSERT INTO versions (package_id, idx, version) VALUES (?, ?, ?)",
       );
+      // A replaced version keeps its index, so the other versions' bits stay where they are.
+      const indexOf = new Map(
+        (
+          this.#db.prepare("SELECT idx, version FROM versions WHERE package_id = ?").all(id) as {
+            idx: number;
+            version: string;
+          }[]
+        ).map((r) => [r.version, r.idx]),
+      );
+      const replaced = new Set(
+        fresh.map((v) => indexOf.get(v.version)).filter((i): i is number => i !== undefined),
+      );
+      if (replaced.size > 0) this.#clearVersions(id, replaced);
+      let nextIdx = next;
       const bits: Record<HashKind, Map<bigint, Uint8Array>> = {
         function: new Map(),
         string: new Map(),
       };
-      fresh.forEach((v, i) => {
-        const idx = next + i;
-        insertVersion.run(id, idx, v.version);
+      for (const v of fresh) {
+        let idx = indexOf.get(v.version);
+        if (idx === undefined) {
+          idx = nextIdx++;
+          insertVersion.run(id, idx, v.version);
+        }
         for (const [kind, list] of [
           ["function", v.functions],
           ["string", v.strings],
@@ -414,7 +435,7 @@ export class IndexWriter {
           const map = bits[kind];
           for (const hash of list) map.set(hash, setBit(map.get(hash) ?? new Uint8Array(0), idx));
         }
-      });
+      }
       const added: Record<HashKind, number> = { function: 0, string: 0 };
       for (const kind of ["function", "string"] as const) {
         const limit = kind === "function" ? MAX_SHARING : MAX_STRING_SHARING;
@@ -432,6 +453,37 @@ export class IndexWriter {
       throw error;
     }
     return fresh.length;
+  }
+
+  /** Clear versions `idxs` of one package from every posting, uncounting hashes it loses. */
+  #clearVersions(packageId: number, idxs: Set<number>): void {
+    for (const kind of ["function", "string"] as const) {
+      const table = kind === "function" ? "hashes" : "strings";
+      const column = kind === "function" ? "functions" : "strings";
+      const select = this.#db.prepare(`SELECT hash, postings FROM ${table}`);
+      select.setReadBigInts(true);
+      const rows = select.all() as { hash: bigint; postings: Uint8Array }[];
+      let lost = 0;
+      for (const row of rows) {
+        const postings = decodePostings(row.postings);
+        const mine = postings.find((p) => p.packageId === packageId);
+        if (!mine) continue;
+        const kept = bitIndices(mine.versions).filter((i) => !idxs.has(i));
+        if (kept.length === bitIndices(mine.versions).length) continue;
+        let rest = postings;
+        if (kept.length > 0)
+          mine.versions = kept.reduce<Uint8Array>((bits, i) => setBit(bits, i), new Uint8Array(0));
+        else {
+          rest = postings.filter((p) => p !== mine);
+          lost++;
+        }
+        if (rest.length === 0) this.#delete[kind].run(row.hash);
+        else this.#put[kind].run(row.hash, encodePostings(rest));
+      }
+      this.#db
+        .prepare(`UPDATE packages SET ${column} = ${column} - ? WHERE id = ?`)
+        .run(lost, packageId);
+    }
   }
 
   /** Returns true when the hash is new for this package. */

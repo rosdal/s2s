@@ -11,7 +11,12 @@ import {
 } from "../src/maps/reroot.js";
 import { chunkExports, chunkStem, synthesizeMissing } from "../src/scaffold/barrels.js";
 import { buildFailureExcerpt } from "../src/scaffold/exec.js";
-import { tsconfig, viteConfig } from "../src/scaffold/templates.js";
+import {
+  needsWasmPlugin,
+  scaffoldPackageJson,
+  tsconfig,
+  viteConfig,
+} from "../src/scaffold/templates.js";
 import {
   findWorkspacePackages,
   resolveWorkspaceSpecifier,
@@ -181,6 +186,26 @@ describe("workspace packages", () => {
     expect(viteConfig("react")).not.toContain("alias");
     const paths = JSON.parse(tsconfig("react", aliases)).compilerOptions.paths;
     expect(paths).toEqual({ "@x/el": ["./src/el/index.ts"], "@x/el/*": ["./src/el/*"] });
+  });
+
+  test("a package that imports its .wasm as a module gets vite-plugin-wasm", () => {
+    const site = (dependencies: Record<string, string>) => ({
+      name: "site",
+      version: "0.0.0",
+      private: true as const,
+      dependencies,
+      devDependencies: {},
+    });
+    const pkg = site({ "@dimforge/rapier3d": "0.19.3", three: "0.187.0" });
+    expect(needsWasmPlugin(pkg)).toBe(true);
+    expect(needsWasmPlugin(site({ three: "0.187.0" }))).toBe(false);
+    expect(scaffoldPackageJson(pkg, "vanilla").devDependencies?.["vite-plugin-wasm"]).toBe(
+      "^3.6.0",
+    );
+    const vite = viteConfig("react", [], { wasm: true });
+    expect(vite).toContain('import wasm from "vite-plugin-wasm";');
+    expect(vite).toContain("plugins: [react(), wasm()],");
+    expect(viteConfig("vanilla", [], { wasm: true })).toContain("plugins: [wasm()],");
   });
 });
 

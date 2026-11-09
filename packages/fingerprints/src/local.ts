@@ -127,6 +127,8 @@ export async function buildLocal(options: LocalBuildOptions): Promise<LocalBuild
           strings: r.strings.map((h) => BigInt(`0x${h}`)),
           dependencies: r.dependencies,
         })),
+        // A version built again (after a builder fix) replaces what an earlier run wrote.
+        { replace: true },
       );
     writer.setMeta({ corpus_date: new Date().toISOString().slice(0, 10), overlay: "true" });
   } finally {

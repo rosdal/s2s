@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { type RequestRecord, readRequestLog } from "../capture/request-log.js";
+import { type RequestRecord, readRequestLog, requestTags } from "../capture/request-log.js";
 import type { WorkspacePaths } from "../capture/workspace.js";
 import { writeFileAtomic, writeJsonAtomic } from "../fs-util.js";
 import { type WebglIndex, webglDir } from "./capture-pass.js";
@@ -143,7 +143,8 @@ export function planAssets(records: RequestRecord[], textureUrls: Set<string>): 
     if (!r.bodyHash || r.status < 200 || r.status >= 300) continue;
     const url = strip(r.url);
     if (seen.has(url)) continue;
-    const tags = r.tags ?? [];
+    // Tags as captured, and as today's rules read the URL (a capture made before `.ktx` counted).
+    const tags = [...new Set([...(r.tags ?? []), ...requestTags(r.url, r.mimeType)])];
     let type: AssetType | undefined;
     if (tags.some((t) => t.startsWith("decoder:"))) type = "decoder";
     else if (tags.includes("asset:model")) type = "model";

@@ -110,7 +110,8 @@ const DECODERS: [string, RegExp][] = [
 
 const ASSETS: [string, RegExp][] = [
   ["model", /\.(?:glb|gltf|fbx|obj|drc|usdz)$/i],
-  ["texture", /\.(?:ktx2|basis|dds)$/i],
+  // `.ktx` as well as `.ktx2`: sites serve KTX2 data under both (bruno-simon.com's palette.ktx).
+  ["texture", /\.(?:ktx2?|basis|dds)$/i],
   ["environment", /\.(?:hdr|exr)$/i],
   ["audio", /\.(?:mp3|ogg|oga|wav|m4a|aac|flac|opus|weba)$/i],
 ];

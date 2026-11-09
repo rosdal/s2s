@@ -94,9 +94,7 @@ export function verifyRunner(
         io.stdout(JSON.stringify(result, null, 2));
         return result.exitCode;
       }
-      const checks = result.report?.checks ?? [];
-      const passed = checks.filter((c) => c.pass).length;
-      const counts = `${passed}/${checks.length} passed`;
+      const counts = result.report ? passCounts(result.report) : "0/0 passed";
       const buildLines = (result.buildOutput ?? "").split("\n").filter(Boolean);
       switch (result.exitCode) {
         case 0:
@@ -136,6 +134,18 @@ function shortReasons(check: PageCheck): string {
   return check.reasons
     .map((r) => SHORT_REASON.find(([pattern]) => pattern.test(r))?.[1] ?? r)
     .join(", ");
+}
+
+/**
+ * How many checks passed: `1/2 passed`, or `pages 2/2 · webgl 1/2 passed` when the report has
+ * WebGL checks, so a failing scene never hides behind passing pages.
+ */
+export function passCounts(report: NonNullable<VerifyResult["report"]>): string {
+  const webgl = report.webgl ?? [];
+  const ratio = (xs: { pass: boolean }[]) => `${xs.filter((x) => x.pass).length}/${xs.length}`;
+  return webgl.length === 0
+    ? `${ratio(report.checks)} passed`
+    : `pages ${ratio(report.checks)} · webgl ${ratio(webgl)} passed`;
 }
 
 const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
@@ -192,11 +202,21 @@ export function verifyReportLines(t: Theme, result: VerifyResult): string[] {
   if (failing.length > 3)
     lines.push(`  ${t.dim(`and ${failing.length - 3} more in verify/report.md`)}`);
 
-  const passed = report.checks.length - failing.length;
-  const total = `${passed}/${report.checks.length} passed`;
+  const failingScenes = (report.webgl ?? []).filter((w) => !w.pass);
+  for (const w of failingScenes.slice(0, 3)) {
+    lines.push(
+      "",
+      `  ${t.error(t.bold("regression"))} ${t.muted(`${w.page} · ${w.viewport} · webgl`)}`,
+    );
+    for (const reason of w.reasons) lines.push(`  ${t.muted(reason)}`);
+  }
+  if (failingScenes.length > 3)
+    lines.push(`  ${t.dim(`and ${failingScenes.length - 3} more in verify/report.md`)}`);
+
+  const total = passCounts(report);
   lines.push(
     "",
-    failing.length === 0
+    failing.length === 0 && failingScenes.length === 0
       ? `  ${t.accent(t.bold(`${symbols.done} ${total}`))}`
       : `  ${t.error(t.bold(`${symbols.failed} ${total}`))}  ${t.dim(`exit 1 · report verify/report.md`)}`,
   );

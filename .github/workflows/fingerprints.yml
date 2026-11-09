@@ -66,7 +66,7 @@ jobs:
             gh release download "$tag" --pattern '*.sqlite.zst' --dir base
             zstd -d base/*.sqlite.zst -o base/base.sqlite
           fi
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: corpus
           path: |
@@ -97,12 +97,12 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter "@rosdal/s2s-fingerprints..." run build
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v8
         with:
           name: corpus
           path: corpus-artifact
       - name: Cached entry hashes and tarballs
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             .fingerprint-cache/entries
@@ -116,7 +116,7 @@ jobs:
           if [ -f corpus-artifact/base/base.sqlite ]; then skip="--skip-index corpus-artifact/base/base.sqlite"; fi
           node packages/fingerprints/dist/cli.js build --shard ${{ matrix.shard }}/${{ strategy.job-total }} $skip
       # Uploaded even when the shard fails or times out: its finished versions still count.
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: results-${{ matrix.shard }}
@@ -141,11 +141,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter "@rosdal/s2s-fingerprints..." run build
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v8
         with:
           name: corpus
           path: corpus-artifact
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v8
         with:
           pattern: results-*
           path: .fingerprint-cache/results

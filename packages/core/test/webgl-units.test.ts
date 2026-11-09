@@ -26,7 +26,7 @@ import {
   silentWav,
 } from "../src/webgl/formats.js";
 import { KeyframeSpecError, parseKeyframes, planKeyframes } from "../src/webgl/keyframes.js";
-import { fittedShape, shapeFor } from "../src/webgl/proxy.js";
+import { fittedShape, padVertices, shapeFor } from "../src/webgl/proxy.js";
 import {
   foldChunks,
   isBuiltinProgram,
@@ -202,6 +202,18 @@ describe("proxy shapes", () => {
     expect([Math.min(...ys), Math.max(...ys)].map((v) => Math.round(v * 1e6) / 1e6)).toEqual([
       0, 4,
     ]);
+  });
+
+  test("a proxy keeps the original's vertex count, so per-vertex randomness stays in step", () => {
+    const { geo } = fittedShape([-1, 0, -2], [1, 4, 2]);
+    const triangles = geo.idx.length;
+    padVertices(geo, 1_000);
+    expect(geo.pos.length / 3).toBe(1_000);
+    expect(geo.nor.length / 3).toBe(1_000);
+    expect(geo.uv.length / 2).toBe(1_000);
+    expect(geo.idx.length).toBe(triangles);
+    const xs = geo.pos.filter((_, i) => i % 3 === 0);
+    expect([Math.min(...xs), Math.max(...xs)]).toEqual([-1, 1]);
   });
 });
 

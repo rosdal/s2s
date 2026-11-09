@@ -1,7 +1,10 @@
 import type { PageCheck, VerifyResult } from "@rosdal/s2s-core";
 import { describe, expect, test } from "vitest";
-import { verifyReportLines } from "../src/commands/verify.js";
+import { passCounts, verifyReportLines } from "../src/commands/verify.js";
 import { colorDepth, columns, createTheme, StageList, visibleLength } from "../src/ui.js";
+
+type Report = NonNullable<VerifyResult["report"]>;
+type WebglCheck = NonNullable<Report["webgl"]>[number];
 
 const plain = createTheme(1);
 
@@ -135,5 +138,42 @@ describe("verify report", () => {
     expect(text).toContain("worst region 390×44 at y 132");
     expect(text).toContain("diff  verify/diffs/index/mobile.png");
     expect(text).toContain("✗ 1/2 passed  exit 1 · report verify/report.md");
+  });
+
+  test("a failing WebGL check shows in the count and fails the summary", () => {
+    const scene = (viewport: string, pass: boolean): WebglCheck => ({
+      page: "index",
+      viewport,
+      pass,
+      reasons: pass ? [] : ["14 of 14 keyframes differ from the capture (t0)"],
+      mode: "proxy",
+      canvasLimit: null,
+      keyframes: [],
+    });
+    const report = {
+      at: "",
+      status: "regression",
+      thresholds: {
+        maxPixelDiff: 0.02,
+        minDomSimilarity: 0.95,
+        maxNewConsoleErrors: 0,
+        maxFailedRequests: 0,
+      },
+      baselineUpdated: false,
+      sinceLastPass: null,
+      checks: [check({}), check({ viewport: "mobile" })],
+      webgl: [scene("desktop", false), scene("mobile", true)],
+    } as unknown as Report;
+    const text = verifyReportLines(plain, {
+      workspace: "/w",
+      exitCode: 1,
+      report,
+    } as VerifyResult).join("\n");
+    expect(text).toContain("regression index · desktop · webgl");
+    expect(text).toContain("14 of 14 keyframes differ from the capture (t0)");
+    expect(text).toContain("✗ pages 2/2 · webgl 1/2 passed  exit 1 · report verify/report.md");
+    expect(text).not.toMatch(/✓ pages/);
+    expect(passCounts(report)).toBe("pages 2/2 · webgl 1/2 passed");
+    expect(passCounts({ ...report, webgl: [] })).toBe("2/2 passed");
   });
 });

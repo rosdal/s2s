@@ -502,6 +502,7 @@ export class PackageReader {
   }
 
   #exporters: Promise<Map<string, string[]>> | undefined;
+  #allSubpaths: Promise<[string, string][]> | undefined;
 
   /** The specifiers (entry and subpaths) that export `name`, from one pass over the package. */
   async exporters(name: string): Promise<string[]> {
@@ -517,6 +518,16 @@ export class PackageReader {
       return index;
     })();
     return (await this.#exporters).get(name) ?? [];
+  }
+
+  /** The shape of export `name` of `specifier` (the entry or one of `subpaths`). */
+  async exportShape(specifier: string, name: string): Promise<Shape | undefined> {
+    this.#allSubpaths ??= this.subpaths([]);
+    const file =
+      specifier === this.name
+        ? await this.entry()
+        : (await this.#allSubpaths).find(([spec]) => spec === specifier)?.[1];
+    return file ? (await this.exportsOf(file)).get(name) : undefined;
   }
 
   /** The browser ESM entry. */
@@ -795,17 +806,20 @@ export async function nameVendorBindings(
     }
     // An unminified bundle keeps the library's own names (`ColorManagement$1`, `uniform$1`): the
     // name without the bundler's `$n` suffix, exported by the package, beats any shape.
-    const named = await exportedAs(local, own, readerOf);
+    const named = await exportedAs(local, own, readerOf, decl);
     if (named) {
       resolved.set(local, named);
       return;
     }
     const shape = shapeOf(decl);
+    // A name the bundle kept that the library doesn't export (`toGrid`, a site's TSL function
+    // filed under three) is the site's own; a loose shape (`oscTriangle`) doesn't rename it.
+    const floor = keptName(local) ? CROSS_PACKAGE_SIMILARITY : 0;
     for (const pkg of own) {
       const hit =
         (await resolveBinding(readerOf(pkg), shape)) ??
         (await byOrder(readerOf(pkg), decl, shape, bundle));
-      if (hit) {
+      if (hit && hit.score >= floor) {
         resolved.set(local, hit);
         return;
       }
@@ -933,7 +947,7 @@ export async function nameVendorBindings(
     // `__defNormalProp`), dependencies first; null when any of them can't be copied.
     // A library binding the copy reads under its own name (`nodeObject$1` is three/tsl's
     // `nodeObject`): imported rather than copied.
-    const byName = (local: string) => exportedAs(local, pkgs, readerOf);
+    const byName = (local: string) => exportedAs(local, pkgs, readerOf, deref(bundle.get(local)));
     // A minified name the copy reads (`Om = new Xn()`, three's `Ray`): the class or function it
     // holds, matched by shape against this module's libraries, is imported rather than copied.
     const byShape = async (local: string): Promise<Resolution | null> => {
@@ -1208,6 +1222,12 @@ async function byOrder(
 /** Shortest kept name trusted as a library's own (minified names are one or two letters). */
 const MIN_NAME_LENGTH = 4;
 
+/** A binding name an unminified bundle kept from the source, not one a minifier made up. */
+function keptName(local: string): boolean {
+  const base = local.replace(/(\$\d+)+$/, "");
+  return /^[A-Za-z][A-Za-z0-9_]*$/.test(base) && base.length >= MIN_NAME_LENGTH;
+}
+
 /**
  * The export a binding stands for by its own name, in an unminified bundle: the name without the
  * bundler's `$n` suffixes, exported by one of `pkgs` (its entry first, then the shortest other
@@ -1218,18 +1238,37 @@ async function exportedAs(
   local: string,
   pkgs: string[],
   readerOf: (pkg: string) => PackageReader,
+  /** The binding's declaration in the bundle, to check the export is the same kind of thing. */
+  decl?: t.Node,
 ): Promise<Resolution | null> {
   const base = local.replace(/(\$\d+)+$/, "");
   if (!/^[A-Za-z_]/.test(base) || (base === local && base.length < MIN_NAME_LENGTH)) return null;
+  const mine = decl ? shapeOf(decl) : undefined;
   for (const pkg of pkgs) {
-    const specifiers = await readerOf(pkg).exporters(base);
+    const reader = readerOf(pkg);
+    const specifiers = await reader.exporters(base);
     const pick = specifiers.includes(pkg)
       ? pkg
       : [...specifiers].sort((a, b) => a.length - b.length)[0];
-    if (pick) return { specifier: pick, name: base, score: 1 };
+    if (!pick) continue;
+    // A site's own `random` (a TSL function) filed under gsap is not gsap's `random`: one name,
+    // nothing else in common.
+    const theirs = mine ? await reader.exportShape(pick, base) : undefined;
+    if (
+      mine &&
+      theirs &&
+      mine.size >= MIN_TOKENS &&
+      theirs.size >= MIN_TOKENS &&
+      jaccard(mine, theirs) < UNLIKE_SIMILARITY
+    )
+      continue;
+    return { specifier: pick, name: base, score: 1 };
   }
   return null;
 }
+
+/** Below this, a declaration and the export sharing its name are different things. */
+const UNLIKE_SIMILARITY = 0.2;
 
 /** Longest helper copied from the bundle, in characters. */
 const MAX_COPIED_HELPER = 2000;

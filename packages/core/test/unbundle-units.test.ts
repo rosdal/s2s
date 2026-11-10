@@ -19,6 +19,8 @@ import { fixDefaultImports } from "../src/unbundle/interop.js";
 import { restoreBabel } from "../src/unbundle/legacy.js";
 import { changedLines, looksObfuscated, transform } from "../src/unbundle/passes.js";
 import { similarity, statementsOf } from "../src/unbundle/similarity.js";
+import { absorbPackageChunks, splitScope } from "../src/unbundle/split.js";
+import type { ChunkInput, UnpackContext } from "../src/unbundle/types.js";
 import { FIXTURES_DIR } from "./helpers/fixtures.js";
 
 // Snapshots of each library behind the adapter: an upgrade that changes output shows up here.
@@ -424,5 +426,105 @@ describe("CSS Modules", () => {
     expect(
       findClassMaps(draft('const a = { sm: "text-sm", primary: "btn-primary" };'), css),
     ).toHaveLength(0);
+  });
+});
+
+describe("package chunks", () => {
+  const chunkOf = (url: string, code: string, vendor: [number, number][] = []): ChunkInput => ({
+    url,
+    bodyHash: url,
+    name:
+      url
+        .split("/")
+        .pop()
+        ?.replace(/-\w+\.js$/, "") ?? "chunk",
+    code,
+    origin: "unbundled",
+    pages: ["index"],
+    bundler: { bundler: "vite", version: null, signals: [] },
+    vendor: vendor.map(([start, end]) => ({
+      package: "@dimforge/rapier3d",
+      version: "0.19.3",
+      start,
+      end,
+      method: "fingerprint",
+      moduleKind: null,
+    })),
+    boundaries: [],
+    bodyOffset: (i) => i,
+  });
+  const ctx: UnpackContext = {
+    keepVendor: false,
+    heuristicSplit: true,
+    minPartBytes: 0,
+    warn() {},
+  };
+  const split = (chunk: ChunkInput) => {
+    const out = splitScope(chunk, ctx, "rollup");
+    return { drafts: out.drafts, tables: new Map([[chunk.url, out.table]]) };
+  };
+
+  // bruno-simon.com: rapier's chunk, which the site loads with `import()`. The wasm-bindgen glue
+  // every such package shares stays unmatched; the package's classes are matched.
+  const names = [
+    ...["World", "RigidBody", "Collider", "Ray", "Vector3", "Shape", "Cuboid", "Ball"],
+    ...["Capsule", "Cone", "Cylinder", "TriMesh"],
+  ];
+  const library = names.map((n) => `class ${n} { step() { return wasm.step(); } }`).join("\n");
+  const rapier = [
+    "var wasm; function __wbg_set_wasm(v) { wasm = v; }",
+    "function __wbg_rawraycolliderintersection_new(e) { return wasm.ray(e); }",
+    library,
+    "function version() { return wasm.version(); }",
+    `export { ${names.join(", ")}, version };`,
+  ].join("\n");
+  const from = rapier.indexOf("class World");
+  const to = from + library.length;
+  const rapierUrl = "https://x.test/assets/rapier-a1.js";
+
+  test("a chunk loaded only by import() whose exports are a package's is that package", () => {
+    const { drafts, tables } = split(chunkOf(rapierUrl, rapier, [[from, to]]));
+    expect(drafts.length).toBeGreaterThan(0);
+    expect(drafts.some((d) => d.code.includes("__wbg_rawraycolliderintersection_new"))).toBe(true);
+    expect(absorbPackageChunks(drafts, tables)).toEqual([rapierUrl]);
+    expect(drafts.every((d) => d.vendor?.package === "@dimforge/rapier3d")).toBe(true);
+  });
+
+  test("a chunk another chunk imports from, or one exporting the site's code, stays", () => {
+    const lib = split(chunkOf(rapierUrl, rapier, [[from, to]]));
+    const user = split(
+      chunkOf(
+        "https://x.test/assets/index-b2.js",
+        'import { version as v } from "./rapier-a1.js";\nconsole.log(v());',
+      ),
+    );
+    expect(
+      absorbPackageChunks(
+        [...lib.drafts, ...user.drafts],
+        new Map([...lib.tables, ...user.tables]),
+      ),
+    ).toEqual([]);
+    const own = names.map((n) => `export function make${n}() { return 1; }`).join("\n");
+    const site = split(
+      chunkOf("https://x.test/assets/route-c3.js", `${rapier}\n${own}`, [[from, to]]),
+    );
+    expect(absorbPackageChunks(site.drafts, site.tables)).toEqual([]);
+  });
+
+  test("Vite's preload wrapper around import() goes; a site's own wrapper stays", () => {
+    const code = [
+      'const __vite__mapDeps = (i, m = __vite__mapDeps, d = m.f || (m.f = ["./rapier-a1.js"])) => i.map((i) => d[i]);',
+      "const preload = (f) => f();",
+      "const retry = (f) => f();",
+      'export const a = preload(() => import("./rapier-a1.js"), __vite__mapDeps([0]));',
+      'export const b = preload(() => import("./rapier-a1.js"), void 0, import.meta.url);',
+      'export const c = retry(() => import("./rapier-a1.js"), 3);',
+    ].join("\n");
+    const { drafts } = split(chunkOf("https://x.test/assets/index-b2.js", code));
+    const text = drafts.map((d) => d.code).join("\n");
+    const spec = `"s2s-chunk:${rapierUrl}"`;
+    expect(text).toContain(`a = import(${spec})`);
+    expect(text).toContain(`b = import(${spec})`);
+    expect(text).toContain(`retry(() => import(${spec}), 3)`);
   });
 });

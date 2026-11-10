@@ -218,6 +218,30 @@ describe("proxy shapes", () => {
     const xs = geo.pos.filter((_, i) => i % 3 === 0);
     expect([Math.min(...xs), Math.max(...xs)]).toEqual([-1, 1]);
   });
+
+  test("a proxy's attributes are not interleaved, so position.array holds only positions", async () => {
+    const { Document } = await import("@gltf-transform/core");
+    const { proxyModel } = await import("../src/webgl/proxy.js");
+    const doc = new Document();
+    const buffer = doc.createBuffer();
+    const position = doc
+      .createAccessor()
+      .setType("VEC3")
+      .setArray(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]))
+      .setBuffer(buffer);
+    const prim = doc.createPrimitive().setAttribute("POSITION", position);
+    const mesh = doc.createMesh("hullRock").addPrimitive(prim);
+    doc.createScene().addChild(doc.createNode("hullRock").setMesh(mesh));
+    const { bytes } = await proxyModel(doc);
+    // GLB: 12-byte header, then the JSON chunk's length and type.
+    const view = Buffer.from(bytes);
+    const json = JSON.parse(view.subarray(20, 20 + view.readUInt32LE(12)).toString("utf8")) as {
+      bufferViews: { byteStride?: number; target?: number }[];
+    };
+    // One tightly packed view per attribute (position, normal, UV), not one view of all three.
+    const vertexViews = json.bufferViews.filter((v) => v.target === 34962);
+    expect(vertexViews.map((v) => v.byteStride)).toEqual([12, 12, 8]);
+  });
 });
 
 describe("proxy vertex layout", () => {
@@ -390,6 +414,94 @@ describe("nameVendorBindings", () => {
     expect(out.named).toMatchObject([{ local: "X", specifier: "liba", export: "LoadingManager" }]);
     expect(out.code).toContain('import { LoadingManager as X } from "liba";');
     expect(out.code).not.toContain("const X = __b");
+  });
+
+  test("a name the bundle kept is not renamed to a loosely similar export", async () => {
+    const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = await mkdtemp(join(tmpdir(), "s2s-names-"));
+    await mkdir(join(dir, "node_modules", "tsl"), { recursive: true });
+    await writeFile(
+      join(dir, "node_modules", "tsl", "package.json"),
+      JSON.stringify({ name: "tsl", type: "module", main: "index.js" }),
+    );
+    await writeFile(
+      join(dir, "node_modules", "tsl", "index.js"),
+      [
+        "export const Fn = (f) => f;",
+        "export const oscTriangle = Fn(([t]) => t.add(0.5).mul(2).fract().sub(0.5).abs());",
+      ].join("\n"),
+    );
+    // bruno-simon.com: the site's `toGrid` sat inside three's range; its shape is two-thirds
+    // `oscTriangle`'s, and binding it to that export broke the site's shaders.
+    const fn = "Fn(([e]) => e.add(1).mul(2).fract().sub(1).div(2))";
+    const source = `var Fn = (f) => f, toGrid = ${fn}, Q = ${fn};`;
+    const code = [
+      'import * as __tsl from "tsl";',
+      "const toGrid = __tsl;",
+      "const Q = __tsl;",
+      "export const a = [toGrid, Q];",
+    ].join("\n");
+    const out = await nameVendorBindings(
+      code,
+      bundleDeclarations(source),
+      (pkg) => new PackageReader(dir, pkg),
+      [],
+      source,
+    );
+    // A minifier's `Q` has no name to go on, so the shape still decides.
+    expect(out.named).toContainEqual(
+      expect.objectContaining({ local: "Q", export: "oscTriangle" }),
+    );
+    expect(out.code).not.toContain("oscTriangle as toGrid");
+    expect(out.copied).toContain("toGrid");
+  });
+
+  test("an export that only shares the binding's name is not it", async () => {
+    const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = await mkdtemp(join(tmpdir(), "s2s-names-"));
+    await mkdir(join(dir, "node_modules", "anim"), { recursive: true });
+    await writeFile(
+      join(dir, "node_modules", "anim", "package.json"),
+      JSON.stringify({ name: "anim", type: "module", main: "index.js" }),
+    );
+    await writeFile(
+      join(dir, "node_modules", "anim", "index.js"),
+      [
+        "export function random(min, max, step) {",
+        "  return Math.round((Math.random() * (max - min)) / step) * step + min.valueOf();",
+        "}",
+        "export function clamp(v, a, b) { return v.valueOf() < a ? a : v > b ? b : v; }",
+      ].join("\n"),
+    );
+    // bruno-simon.com: the site's TSL `random`, filed under gsap, was imported as gsap's `random`
+    // and its shader compiled `NaN` constants.
+    const source = [
+      "var Fn = (f) => f;",
+      'var random = Fn(([e]) => e.toVar().assign(e.dot(e)).fract().setLayout({ name: "random" }));',
+      "var clamp$1 = function (v, a, b) { return v.valueOf() < a ? a : v > b ? b : v; };",
+    ].join("\n");
+    const code = [
+      'import * as __anim from "anim";',
+      "const random = __anim;",
+      "const clamp$1 = __anim;",
+      "export const a = [random, clamp$1];",
+    ].join("\n");
+    const out = await nameVendorBindings(
+      code,
+      bundleDeclarations(source),
+      (pkg) => new PackageReader(dir, pkg),
+      [],
+      source,
+    );
+    expect(out.named).toContainEqual(
+      expect.objectContaining({ local: "clamp$1", export: "clamp" }),
+    );
+    expect(out.code).not.toContain("random as random");
+    expect(out.copied).toContain("random");
   });
 });
 

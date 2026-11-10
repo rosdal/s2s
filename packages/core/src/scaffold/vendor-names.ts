@@ -1105,12 +1105,10 @@ export async function nameVendorBindings(
       score: r.score,
     });
   }
-  if (bySpecifier.size > 0)
-    edits.push({
-      start: 0,
-      end: 0,
-      text: `${[...bySpecifier].map(([spec, names]) => `import { ${names.join(", ")} } from ${JSON.stringify(spec)};`).join("\n")}\n`,
-    });
+  const copyImportText =
+    bySpecifier.size > 0
+      ? `${[...bySpecifier].map(([spec, names]) => `import { ${names.join(", ")} } from ${JSON.stringify(spec)};`).join("\n")}\n`
+      : "";
   for (const [local, { pkg, node }] of namespaces) {
     const lines: string[] = [];
     const bySpec = new Map<string, string[]>();
@@ -1162,6 +1160,13 @@ export async function nameVendorBindings(
     for (const [spec, names] of bySpec)
       lines.push(`import { ${names.join(", ")} } from ${JSON.stringify(spec)};`);
     edits.push({ start: node.start ?? 0, end: node.end ?? 0, text: lines.join("\n") });
+  }
+  if (copyImportText) {
+    // The top of the file is often the namespace import rewritten above; an insert at 0 would be
+    // dropped behind that wider edit, so the imports join it.
+    const first = edits.find((e) => e.start === 0 && e.end > 0);
+    if (first) first.text = copyImportText + first.text;
+    else edits.push({ start: 0, end: 0, text: copyImportText });
   }
   return {
     code: applyEdits(code, edits),

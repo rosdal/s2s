@@ -472,6 +472,33 @@ describe("nameVendorBindings (#28)", () => {
     expect(out.code).not.toContain("= __vendor_three;");
   });
 
+  test("a copy's imports survive the namespace import at the top of the file being rewritten", async () => {
+    const ray =
+      "{ constructor() { this.origin = 1; this.direction = 2; } at() {} intersectPlane() {} intersectBox() {} recast() {} }";
+    const plane =
+      "{ constructor() { this.normal = 1; this.constant = 2; } setFromNormalAndCoplanarPoint() {} distanceToPoint() {} projectPoint() {} coplanarPoint() {} }";
+    const dir = await libs({
+      three: { "index.js": `export class Ray ${ray}\nexport class Plane ${plane}` },
+    });
+    const code = [
+      'import * as __vendor_three from "three";',
+      "const Pl = __vendor_three;",
+      "const Nm = __vendor_three;",
+      "export { Nm, Pl };",
+    ].join("\n");
+    const bundleCode = `var Pl = class ${plane}; var Xn = class ${ray}; var Nm = new Xn();`;
+    const out = await nameVendorBindings(
+      code,
+      bundleDeclarations(bundleCode),
+      (pkg) => new PackageReader(dir, pkg),
+      [],
+      bundleCode,
+    );
+    expect(out.code).toMatch(/import { Plane as Pl } from "three";/);
+    expect(out.code).toMatch(/import { Ray as Xn } from "three";/);
+    expect(out.code).toContain("const Nm = new Xn()");
+  });
+
   test("an alias another chunk declares is followed where it is declared", () => {
     const theirs = bundleDeclarations(
       "var core = { to() {} }; var gsap = core.registerPlugin(css) || core;",

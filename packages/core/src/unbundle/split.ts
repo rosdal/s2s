@@ -628,12 +628,17 @@ export function splitScope(
       const at = unitAt(start(path.node));
       if (at < 0) return;
       const url = resolveUrl(value, chunk.url);
-      if (url)
-        (units[at] as Unit).edits.push({
-          start: start(arg),
-          end: end(arg),
-          text: quote(chunkSpecifier(url)),
-        });
+      if (!url) return;
+      const unit = units[at] as Unit;
+      unit.edits.push({ start: start(arg), end: end(arg), text: quote(chunkSpecifier(url)) });
+      // `__vitePreload(() => import("./x.js"), __vite__mapDeps([0, 1]), import.meta.url)`: the
+      // dependencies are the capture's chunk files, which the rebuild doesn't have (it adds its own
+      // preload), so only the import stays.
+      const preload = vitePreloadCall(path);
+      if (preload) {
+        unit.edits.push({ start: start(preload), end: start(path.node), text: "" });
+        unit.edits.push({ start: end(path.node), end: end(preload), text: "" });
+      }
     },
   });
 
@@ -983,6 +988,39 @@ export function splitScope(
   };
 }
 
+/**
+ * The call around `import()` when it is Vite's preload helper: `p(() => import(x), deps)` or
+ * `p(() => import(x), deps, import.meta.url)`, whatever the minifier named `p`.
+ */
+function vitePreloadCall(path: NodePath<t.ImportExpression>): t.CallExpression | undefined {
+  const arrow = path.parentPath?.node;
+  const call = path.parentPath?.parentPath?.node;
+  if (
+    arrow?.type !== "ArrowFunctionExpression" ||
+    arrow.body !== path.node ||
+    arrow.params.length > 0 ||
+    call?.type !== "CallExpression" ||
+    call.callee.type !== "Identifier" ||
+    call.arguments[0] !== arrow ||
+    call.arguments.length < 2 ||
+    call.arguments.length > 3
+  )
+    return undefined;
+  // A site's own `retry(() => import(x), 3)` has the same outline; Vite's helper is told by its
+  // dependency list or its base URL.
+  const [, deps, base] = call.arguments;
+  const mapDeps =
+    deps?.type === "CallExpression" &&
+    deps.callee.type === "Identifier" &&
+    deps.callee.name === "__vite__mapDeps";
+  const metaUrl =
+    base?.type === "MemberExpression" &&
+    base.object.type === "MetaProperty" &&
+    base.property.type === "Identifier" &&
+    base.property.name === "url";
+  return mapDeps || metaUrl ? call : undefined;
+}
+
 /** A declaration's value as expression text: a declarator's init, or a function or class. */
 function declarationText(node: t.Statement, code: string): string | undefined {
   if (node.type === "VariableDeclaration") {
@@ -1055,6 +1093,42 @@ export interface ChunkTable {
   exports: Map<string, { key: string; local: string }>;
   /** Exports dropped as library code, by exported name. */
   vendor?: Map<string, { package: string; version: string | null; text?: string }>;
+}
+
+/** The share of a chunk's exports one package's dropped code must make up for `absorbPackageChunks`. */
+const PACKAGE_CHUNK_SHARE = 0.9;
+/** Fewer exports than this say too little about what a chunk is. */
+const PACKAGE_CHUNK_MIN_EXPORTS = 8;
+
+/**
+ * `import("./rapier-x.js")`: a chunk the site only loads with `import()`, whose exports are nearly
+ * all one package's dropped code, is that package's entry chunk. What stays of it (vite-plugin-wasm's
+ * loader, the `__wbg_*` import shims every wasm-bindgen package shares, so no fingerprint tells them
+ * apart, and a re-export or two) is the package's own code, so the whole chunk becomes the package
+ * and `import()` loads it from there. A chunk another chunk imports from statically is left alone:
+ * its importers read single bindings, which can be the site's.
+ */
+export function absorbPackageChunks(drafts: Draft[], tables: Map<string, ChunkTable>): string[] {
+  const imported = new Set<string>();
+  for (const d of drafts)
+    for (const line of d.head)
+      if (line.target.kind === "chunk-export") imported.add(line.target.url);
+  const absorbed: string[] = [];
+  for (const [url, table] of tables) {
+    if (imported.has(url) || !table.vendor) continue;
+    const own = drafts.filter((d) => d.chunk.url === url);
+    if (own.length === 0 || own.some((d) => d.vendor)) continue;
+    const count = new Map<string, number>();
+    for (const v of table.vendor.values()) count.set(v.package, (count.get(v.package) ?? 0) + 1);
+    const [pkg, n] = [...count].sort((a, b) => b[1] - a[1])[0] ?? ["", 0];
+    const total = table.vendor.size + table.exports.size;
+    if (!pkg || total < PACKAGE_CHUNK_MIN_EXPORTS || n / total < PACKAGE_CHUNK_SHARE) continue;
+    const version =
+      [...table.vendor.values()].find((v) => v.package === pkg && v.version)?.version ?? null;
+    for (const d of own) d.vendor = { package: pkg, version };
+    absorbed.push(url);
+  }
+  return absorbed;
 }
 
 interface Assignment {

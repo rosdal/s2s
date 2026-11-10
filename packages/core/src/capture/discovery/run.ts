@@ -266,6 +266,18 @@ export class Discovery {
                 signal,
               );
               const kind = assetKind(mimeOf(result.headers), candidate);
+              // An icon or manifest is only kept for replay (the request log has it); there is
+              // nothing in it to scan.
+              if (ref.source === "icon") {
+                if (result.status >= 200 && result.status < 300 && result.hash && kind !== "html") {
+                  entry.url = candidate;
+                  entry.status = "fetched";
+                  entry.hash = result.hash;
+                  this.fetchedCount++;
+                  break;
+                }
+                continue;
+              }
               // Servers with an SPA fallback answer 200 with HTML for any path.
               if (
                 result.status >= 200 &&

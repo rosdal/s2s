@@ -13,6 +13,7 @@ export type RefSource =
   | "importmap"
   | "preload"
   | "html"
+  | "icon"
   | "license";
 
 export interface ChunkRef {
@@ -303,6 +304,8 @@ export function readViteRefs(text: string, fileUrl: string): ChunkRef[] {
 // ---------------------------------------------------------------------------------------------
 // HTML
 
+const ICON_RELS = new Set(["icon", "apple-touch-icon", "mask-icon", "manifest"]);
+
 function attr(tag: string, name: string): string | undefined {
   const match = new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i").exec(tag);
   return match ? (match[1] ?? match[2] ?? match[3]) : undefined;
@@ -340,6 +343,9 @@ export function readHtmlRefs(html: string, pageUrl: string): ChunkRef[] {
     const href = attr(tag, "href");
     if (!href) continue;
     if (rel.includes("stylesheet")) push(href, "html");
+    // The browser asks for icons and the manifest on its own, often after the capture has moved
+    // on; fetched here, the rebuild that links them gets the captured answer (bruno-simon.com).
+    else if (rel.some((r) => ICON_RELS.has(r))) push(href, "icon");
     else if (rel.some((r) => r === "modulepreload" || r === "preload" || r === "prefetch")) {
       if (
         rel.includes("modulepreload") ||

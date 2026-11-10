@@ -132,4 +132,22 @@ describe("readHtmlRefs", () => {
       "https://cdn.example.com/_next/static/abc123/_ssgManifest.js",
     ]);
   });
+
+  test("icons and the web manifest, which the browser fetches on its own", () => {
+    const html = [
+      '<link rel="icon" type="image/png" href="./favicons/favicon-96x96.png" sizes="96x96">',
+      '<link rel="shortcut icon" href="./favicons/favicon.ico">',
+      '<link rel="apple-touch-icon" href="/apple.png">',
+      '<link rel="manifest" href="./favicons/site.webmanifest">',
+      '<link rel="preconnect" href="https://fonts.googleapis.com">',
+    ].join("\n");
+    const refs = readHtmlRefs(html, "https://bruno-simon.com/");
+    expect(urls(refs.filter((r) => r.source === "icon"))).toEqual([
+      "https://bruno-simon.com/apple.png",
+      "https://bruno-simon.com/favicons/favicon-96x96.png",
+      "https://bruno-simon.com/favicons/favicon.ico",
+      "https://bruno-simon.com/favicons/site.webmanifest",
+    ]);
+    expect(refs).toHaveLength(4);
+  });
 });

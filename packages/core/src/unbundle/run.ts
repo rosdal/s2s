@@ -17,7 +17,7 @@ import { buildGraph, type GraphInput, type ModulesFile } from "./graph.js";
 import { chunkName, loadInputs } from "./inputs.js";
 import { fixDefaultImports } from "./interop.js";
 import { PASSES, type PassName, type PassResult, transform } from "./passes.js";
-import { type ChunkTable, type InlinedVendor, splitScope } from "./split.js";
+import { absorbPackageChunks, type ChunkTable, type InlinedVendor, splitScope } from "./split.js";
 import type { ChunkInput, Draft, ImportLine, UnpackContext } from "./types.js";
 import { vendorNamespace, vendorNamespaceLines } from "./vendor.js";
 import { unpackWebpack } from "./webpack.js";
@@ -306,6 +306,8 @@ async function run(
       tables.set(chunk.url, { entry: whole.key, exports: new Map() });
     }
   }
+  // A chunk that is one package's entry (`import("./rapier-x.js")`) is read from the package.
+  absorbPackageChunks(drafts, tables);
   const kept = drafts.filter((d) => !d.vendor);
   const byKey = new Map(drafts.map((d) => [d.key, d]));
 
@@ -557,7 +559,9 @@ async function run(
       (n, [s, e]) => n + d.chunk.bodyOffset(e) - d.chunk.bodyOffset(s),
       0,
     );
-  const vendorModuleBytes = drafts.filter((d) => d.vendor).reduce((n, d) => n + spanBytes(d), 0);
+  const vendorModuleBytes = drafts
+    .filter((d) => d.vendor)
+    .reduce((n, d) => n + spanBytes(d) + d.vendorBytesRemoved, 0);
   const vendorInside = kept.reduce((n, d) => n + d.vendorBytesRemoved, 0);
   const vendorDroppedBytes = vendorModuleBytes + vendorInside;
   const keptBytes = kept.reduce((n, d) => n + spanBytes(d), 0) - vendorInside;

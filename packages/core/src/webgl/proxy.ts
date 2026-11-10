@@ -1,4 +1,4 @@
-import type { Document, Primitive } from "@gltf-transform/core";
+import { type Document, type Primitive, VertexLayout } from "@gltf-transform/core";
 import { prune } from "@gltf-transform/functions";
 import { gltfIO } from "./gltf.js";
 
@@ -227,6 +227,7 @@ function replaceGeometry(doc: Document, prim: Primitive): ProxyShape {
  */
 export async function proxyModel(
   doc: Document,
+  options: { interleaved?: boolean } = {},
 ): Promise<{ bytes: Uint8Array; report: ProxyReport }> {
   const root = doc.getRoot();
   const report: ProxyReport = {
@@ -283,5 +284,11 @@ export async function proxyModel(
     if (!STRUCTURAL.has(ext.extensionName)) ext.dispose();
   await doc.transform(prune({ keepLeaves: true, keepAttributes: true }));
   const io = await gltfIO();
-  return { bytes: await io.writeBinary(doc), report };
+  // The layout decides whether three makes InterleavedBuffers (each with a UUID) when it loads.
+  io.setVertexLayout(options.interleaved ? VertexLayout.INTERLEAVED : VertexLayout.SEPARATE);
+  try {
+    return { bytes: await io.writeBinary(doc), report };
+  } finally {
+    io.setVertexLayout(VertexLayout.INTERLEAVED);
+  }
 }

@@ -127,3 +127,63 @@ export function summarize(doc: Document): ModelSummary {
       .sort(),
   };
 }
+
+/**
+ * Whether a model stores its vertex attributes interleaved: a buffer view whose `byteStride` is
+ * wider than the attribute it holds. three wraps those in an `InterleavedBuffer`, which takes a
+ * UUID (four `Math.random()` calls), so a proxy keeps the layout the original had.
+ */
+export function interleavedVertices(bytes: Uint8Array): boolean {
+  const json = gltfJson(bytes);
+  if (!json) return false;
+  for (const mesh of json.meshes ?? [])
+    for (const prim of mesh.primitives ?? [])
+      for (const index of Object.values(prim.attributes ?? {})) {
+        const accessor = json.accessors?.[index];
+        const stride =
+          accessor?.bufferView === undefined
+            ? undefined
+            : json.bufferViews?.[accessor.bufferView]?.byteStride;
+        const size =
+          (COMPONENTS[accessor?.type ?? ""] ?? 0) *
+          (COMPONENT_BYTES[accessor?.componentType ?? 0] ?? 0);
+        if (stride && size && stride !== size) return true;
+      }
+  return false;
+}
+
+const COMPONENTS: Record<string, number> = {
+  SCALAR: 1,
+  VEC2: 2,
+  VEC3: 3,
+  VEC4: 4,
+  MAT2: 4,
+  MAT3: 9,
+  MAT4: 16,
+};
+const COMPONENT_BYTES: Record<number, number> = {
+  5120: 1,
+  5121: 1,
+  5122: 2,
+  5123: 2,
+  5125: 4,
+  5126: 4,
+};
+
+interface GltfJson {
+  bufferViews?: { byteStride?: number }[];
+  accessors?: { bufferView?: number; type?: string; componentType?: number }[];
+  meshes?: { primitives?: { attributes?: Record<string, number> }[] }[];
+}
+
+/** The JSON of a GLB (its first chunk) or of a `.gltf` file. */
+function gltfJson(bytes: Uint8Array): GltfJson | undefined {
+  try {
+    const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (buf.toString("ascii", 0, 4) !== "glTF") return JSON.parse(buf.toString("utf8"));
+    const length = buf.readUInt32LE(12);
+    return JSON.parse(buf.toString("utf8", 20, 20 + length));
+  } catch {
+    return undefined;
+  }
+}

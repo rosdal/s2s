@@ -1,11 +1,15 @@
 import { createHash } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Browser, BrowserContext } from "playwright-core";
+import type { Browser, BrowserContext, Page } from "playwright-core";
+import type { BodyStore } from "../capture/body-store.js";
 import type { ViewportName } from "../capture/capture.js";
 import type { Recorder } from "../capture/recorder.js";
+import type { RequestRecord } from "../capture/request-log.js";
 import type { WorkspacePaths } from "../capture/workspace.js";
 import { writeJsonAtomic } from "../fs-util.js";
+import { ReplayIndex } from "../verify/replay.js";
+import { installReplay } from "../verify/routes.js";
 import { DEFAULT_SEED } from "./init-script.js";
 import type { Keyframe } from "./keyframes.js";
 import {
@@ -70,6 +74,11 @@ export interface WebglPassInput {
   viewports: ViewportName[];
   userAgents: Record<ViewportName, string>;
   recorder?: Recorder;
+  /**
+   * Take the snapshots from a replay of what the capture recorded, as verify does, after a live
+   * run that records it. Without this, the snapshots come from the live run.
+   */
+  replay?: { records: () => RequestRecord[]; store: BodyStore };
   keyframes: Keyframe[] | "auto";
   keyframesSpec: string;
   maxKeyframes: number;
@@ -121,21 +130,63 @@ export async function webglPass(input: WebglPassInput): Promise<WebglIndex> {
       for (const viewport of input.viewports) {
         input.signal?.throwIfAborted();
         input.onPage?.(page.slug, viewport);
-        const context = await deterministicContext(browser, viewport, input.userAgents[viewport], {
-          ...(input.authState ? { authState: input.authState } : {}),
-        });
-        if (input.recorder) {
-          input.recorder.tag = { page: page.slug, viewport, phase: "webgl" };
-          input.recorder.attach(context);
-        }
-        await input.onContext?.(context);
-        const tab = await context.newPage();
-        tab.on("dialog", (d) => void d.dismiss().catch(() => {}));
-        try {
-          const loaded = await loadDeterministic(tab, page.url, {
+        const open = async (record: boolean) => {
+          const context = await deterministicContext(
+            browser as Browser,
+            viewport,
+            input.userAgents[viewport],
+            { ...(input.authState ? { authState: input.authState } : {}) },
+          );
+          if (record && input.recorder) {
+            input.recorder.tag = { page: page.slug, viewport, phase: "webgl" };
+            input.recorder.attach(context);
+          }
+          await input.onContext?.(context);
+          const tab = await context.newPage();
+          tab.on("dialog", (d) => void d.dismiss().catch(() => {}));
+          return { context, tab };
+        };
+        const load = (tab: Page) =>
+          loadDeterministic(tab, page.url, {
             quietMs: input.quietMs,
             timeoutMs: input.phaseTimeoutMs,
           });
+        if (input.replay) {
+          // Live, the order in which responses arrive within a clock step is the network's, and
+          // what runs in between (an animation drawing Math.random(), say) shifts with it. Verify
+          // replays the capture, so the snapshots come from replaying it too: one live run records
+          // every response the load and the walk need, then a replayed run takes the snapshots.
+          const live = await open(true);
+          try {
+            const loaded = await load(live.tab);
+            await walkKeyframes(
+              live.tab,
+              input.keyframes,
+              {
+                baseMs: loaded.baseMs,
+                maxKeyframes: input.maxKeyframes,
+                ...(input.signal ? { signal: input.signal } : {}),
+              },
+              async () => {},
+            );
+          } finally {
+            await live.context.close().catch(() => {});
+          }
+          await input.recorder?.drain();
+        }
+        const { context, tab } = await open(!input.replay);
+        if (input.replay) {
+          await installReplay(tab, {
+            origin: new URL(page.url).origin,
+            dist: null,
+            replay: new ReplayIndex(input.replay.records(), page.url, { site: true }),
+            store: input.replay.store,
+            blocked: new Set<string>(),
+            onReplay: () => {},
+          });
+        }
+        try {
+          const loaded = await load(tab);
           if (loaded.timedOut)
             input.warn(
               `${page.url} (${viewport}): the network never went quiet in the WebGL pass; keyframes may not be repeatable`,

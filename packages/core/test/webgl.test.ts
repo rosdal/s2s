@@ -59,8 +59,12 @@ async function offline(context: BrowserContext): Promise<void> {
 }
 
 let runs = 0;
-async function captured(name: FixtureName, extra: Partial<CaptureOptions> = {}): Promise<string> {
-  const server = await serveFixture(name);
+async function captured(
+  name: FixtureName,
+  extra: Partial<CaptureOptions> = {},
+  serve: Parameters<typeof serveFixture>[1] = {},
+): Promise<string> {
+  const server = await serveFixture(name, serve);
   const outDir = path.join(tmp, `${name}-${runs++}`);
   try {
     const result = await capture({
@@ -149,6 +153,35 @@ describe("WebGL capture", () => {
       );
       expect(later.full).toBe(false);
       expect(later.base).toBe("t0");
+    },
+    SLOW,
+  );
+});
+
+describe("WebGL capture replays what it recorded", () => {
+  test(
+    "the snapshots come from the recorded responses, as verify replays them, not a later live load",
+    async () => {
+      // Each page load gets the next number, and the page moves its scene by it. Verify replays
+      // the first recorded page, so the captured snapshots must show that one too.
+      let served = 0;
+      const dir = await captured(
+        "three-basic",
+        {},
+        {
+          html: (body) =>
+            body.replace(
+              "<head>",
+              `<head><script>window.__THREE_DEVTOOLS__?.addEventListener("observe", (e) => { if (e.detail?.isScene) e.detail.position.x = ${++served}; });</script>`,
+            ),
+        },
+      );
+      expect(served).toBeGreaterThan(1);
+      const t0 = JSON.parse(
+        await readFile(path.join(dir, "raw", "webgl", "index", "desktop", "t0.json"), "utf8"),
+      ) as { scenes: { nodes: { path: string; position: number[] }[] }[] };
+      const world = t0.scenes[0]?.nodes.find((n) => n.path === "World");
+      expect(world?.position[0]).toBe(1);
     },
     SLOW,
   );

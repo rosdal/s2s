@@ -153,7 +153,12 @@ function acceptWebSocket(req: IncomingMessage, socket: import("node:stream").Dup
   socket.on("error", () => {});
 }
 
-async function serveFile(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function serveFile(
+  root: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+  html?: (body: string) => string,
+): Promise<void> {
   const url = new URL(req.url ?? "/", "http://localhost");
   let file = path.join(root, decodeURIComponent(url.pathname));
   if (!file.startsWith(root)) {
@@ -162,7 +167,8 @@ async function serveFile(root: string, req: IncomingMessage, res: ServerResponse
   }
   try {
     if ((await stat(file)).isDirectory()) file = path.join(file, "index.html");
-    const body = await readFile(file);
+    const raw = await readFile(file);
+    const body = html && file.endsWith(".html") ? Buffer.from(html(raw.toString("utf8"))) : raw;
     res.writeHead(200, { "content-type": TYPES[path.extname(file)] ?? "application/octet-stream" });
     res.end(req.method === "HEAD" ? undefined : body);
   } catch {
@@ -170,8 +176,14 @@ async function serveFile(root: string, req: IncomingMessage, res: ServerResponse
   }
 }
 
-/** Serve one fixture on a random localhost port. `hostile` gets a polling endpoint and a websocket. */
-export async function serveFixture(name: FixtureName): Promise<FixtureServer> {
+/**
+ * Serve one fixture on a random localhost port. `hostile` gets a polling endpoint and a websocket.
+ * `html` rewrites every HTML page as it is served.
+ */
+export async function serveFixture(
+  name: FixtureName,
+  options: { html?: (body: string) => string } = {},
+): Promise<FixtureServer> {
   const root = path.join(FIXTURES_DIR, FIXTURE_ROOTS[name]);
   const server = createServer((req, res) => {
     if (name === "static" && req.url === "/old.css") {
@@ -188,7 +200,7 @@ export async function serveFixture(name: FixtureName): Promise<FixtureServer> {
       res.writeHead(200, { "content-type": "application/json" }).end('{"ok":true}');
       return;
     }
-    void serveFile(root, req, res);
+    void serveFile(root, req, res, options.html);
   });
   // Upgraded sockets leave the server's bookkeeping, so close() would wait on them forever.
   const sockets = new Set<import("node:stream").Duplex>();

@@ -56,6 +56,8 @@ export class RequestLog {
   #stream: WriteStream | undefined;
   #nextId = 1;
   count = 0;
+  /** Every record appended so far, for stages that replay the capture while it runs. */
+  readonly records: RequestRecord[] = [];
 
   constructor(file: string) {
     this.#file = file;
@@ -80,6 +82,7 @@ export class RequestLog {
     const tags = requestTags(record.url, record.mimeType);
     const tagged = tags.length > 0 ? { ...record, tags } : record;
     this.#stream.write(`${JSON.stringify(tagged)}\n`);
+    this.records.push(tagged);
     this.count++;
   }
 

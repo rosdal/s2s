@@ -1,3 +1,4 @@
+import { Document, VertexLayout } from "@gltf-transform/core";
 import { describe, expect, test } from "vitest";
 import { requestTags } from "../src/capture/request-log.js";
 import { revisionIn } from "../src/recoverers/three/detect.js";
@@ -25,8 +26,9 @@ import {
   placeholderPng,
   silentWav,
 } from "../src/webgl/formats.js";
+import { gltfIO, interleavedVertices } from "../src/webgl/gltf.js";
 import { KeyframeSpecError, parseKeyframes, planKeyframes } from "../src/webgl/keyframes.js";
-import { fittedShape, padVertices, shapeFor } from "../src/webgl/proxy.js";
+import { fittedShape, padVertices, proxyModel, shapeFor } from "../src/webgl/proxy.js";
 import {
   foldChunks,
   isBuiltinProgram,
@@ -214,6 +216,40 @@ describe("proxy shapes", () => {
     expect(geo.idx.length).toBe(triangles);
     const xs = geo.pos.filter((_, i) => i % 3 === 0);
     expect([Math.min(...xs), Math.max(...xs)]).toEqual([-1, 1]);
+  });
+});
+
+describe("proxy vertex layout", () => {
+  /** A one-triangle model written with `layout`. */
+  async function triangle(layout: VertexLayout): Promise<Uint8Array> {
+    const doc = new Document();
+    const buffer = doc.createBuffer();
+    const acc = (type: "VEC3", array: Float32Array) =>
+      doc.createAccessor().setType(type).setArray(array).setBuffer(buffer);
+    const prim = doc
+      .createPrimitive()
+      .setAttribute("POSITION", acc("VEC3", new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0])))
+      .setAttribute("NORMAL", acc("VEC3", new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1])));
+    const mesh = doc.createMesh("Tri").addPrimitive(prim);
+    doc.createScene().addChild(doc.createNode("Tri").setMesh(mesh));
+    const io = await gltfIO();
+    io.setVertexLayout(layout);
+    try {
+      return await io.writeBinary(doc);
+    } finally {
+      io.setVertexLayout(VertexLayout.INTERLEAVED);
+    }
+  }
+
+  test("a proxy keeps the original's layout, so three makes the same InterleavedBuffers", async () => {
+    const io = await gltfIO();
+    for (const layout of [VertexLayout.SEPARATE, VertexLayout.INTERLEAVED]) {
+      const original = await triangle(layout);
+      const interleaved = interleavedVertices(original);
+      expect(interleaved).toBe(layout === VertexLayout.INTERLEAVED);
+      const { bytes } = await proxyModel(await io.readBinary(original), { interleaved });
+      expect(interleavedVertices(bytes)).toBe(interleaved);
+    }
   });
 });
 

@@ -1,5 +1,15 @@
 # @rosdal/s2s
 
+## 0.3.1
+
+### Patch Changes
+
+- 080f32a: Capture stores the real body of a response the page read with `.blob()`, such as an image three.js loads through `ImageBitmapLoader`. Chromium reports those bodies as empty, so capture now fetches them again. Model proxies keep the original's vertex count, so code that draws `Math.random()` per vertex stays in step with verify's seeded sequence.
+- 73fc49d: Recover sites that use `@dimforge/rapier3d`, the build that imports its `.wasm` as a module. `s2s db build` fingerprints such packages instead of skipping them, and a rebuilt version now replaces the one an earlier run wrote. Patch releases with identical code report their range (`0.19.x`) instead of no version. The scaffold adds `vite-plugin-wasm` when a dependency needs it.
+- 64198ef: The scaffold names more bindings of inlined libraries instead of leaving them as the library's whole namespace. A chunk's import of another chunk's library binding follows that chunk's aliases (`gsap = core.registerPlugin(css) || core`). A copied instance of a minified library class (`new Xn()`) imports the class by shape (three's `Ray`). When bindings still stay unnamed, packages Stage 3 left in review are installed and tried; one that names a binding is added to the project and listed under its packages (Lenis on artefakt.mov), and the rest are removed again.
+- aa7e406: Verify's summary counts the WebGL checks: `pages 2/2 · webgl 1/2 passed`. A failing scene gets its own regression block, and the last line no longer shows a pass when the WebGL check failed and verify exits 1.
+- eda1fe2: WebGL scene snapshots are repeatable between capture and verify. The capture's deterministic pass still loads the live site once, to record every response, then takes its snapshots from a replay of that recording, as verify does. On the live network, the order in which responses arrived within a clock step changed what ran between them, and with it verify's seeded `Math.random` sequence. Model proxies also keep the original's vertex layout: an interleaved proxy of a non-interleaved model made three create extra `InterleavedBuffer`s, each taking a UUID from the same sequence.
+
 ## 0.3.0
 
 ### Minor Changes

@@ -47,7 +47,7 @@ import {
   viteConfig,
   WORKSPACE_GITIGNORE,
 } from "./templates.js";
-import { resolveVendorNames } from "./vendor-names.js";
+import { type NamedBinding, resolveVendorNames } from "./vendor-names.js";
 import { findWorkspacePackages, workspaceEntry } from "./workspaces.js";
 
 export interface ScaffoldOptions {
@@ -131,6 +131,7 @@ interface PackagesFile {
     confidence: string;
     status: string;
     dev?: boolean;
+    registry?: { exists?: boolean | null; versionPublished?: boolean | null };
   }[];
 }
 
@@ -281,6 +282,64 @@ interface Outcome {
   fallbackIdentity: boolean;
   recoverer: string;
   recovererDetails: Record<string, string | number | boolean | null>;
+}
+
+/** Whether a recovered module still binds a library's whole namespace (`const X = __vendor_y;`). */
+async function hasUnnamedAliases(files: string[]): Promise<boolean> {
+  for (const file of files) {
+    const code = await readFile(file, "utf8").catch(() => "");
+    if (/^const [\w$]+ = __vendor_[\w$]+;$/m.test(code)) return true;
+  }
+  return false;
+}
+
+/**
+ * Install the review `candidates` next to the project's dependencies, name bindings again with
+ * them, and keep each one that named something. The rest come out of `package.json` again.
+ */
+async function tryReviewPackages(
+  paths: WorkspacePaths,
+  pm: PackageManager,
+  packagesFile: PackagesFile,
+  candidates: PackagesFile["packages"],
+  signal: AbortSignal | undefined,
+  name: () => Promise<NamedBinding[]>,
+): Promise<{ named: NamedBinding[]; kept: PackagesFile["packages"]; lockfile: string | null }> {
+  const original = await readFile(paths.packageJson, "utf8");
+  const manifest = JSON.parse(original) as PackageJson & { dependencies?: Record<string, string> };
+  const install = () =>
+    installProject(
+      paths.project,
+      { name: pm, version: packagesFile.packageManager?.version ?? undefined },
+      signal,
+    );
+  const restore = async () => {
+    await writeFileAtomic(paths.packageJson, original);
+    return install();
+  };
+  manifest.dependencies = { ...manifest.dependencies };
+  for (const c of candidates) manifest.dependencies[c.name] = c.version as string;
+  await writeJsonAtomic(paths.packageJson, manifest);
+  if ((await install()).exitCode !== 0) {
+    const back = await restore();
+    return { named: [], kept: [], lockfile: back.lockfile };
+  }
+  const named = await name();
+  const root = (pkg: string) =>
+    pkg.startsWith("@") ? pkg.split("/").slice(0, 2).join("/") : (pkg.split("/")[0] ?? pkg);
+  // A binding records the namespace it stood for (`gsap`); the package it is now is its import.
+  const used = new Set(named.map((n) => root(n.specifier)));
+  const kept = candidates.filter((c) => used.has(c.name));
+  if (kept.length === 0) {
+    const back = await restore();
+    return { named, kept, lockfile: back.lockfile };
+  }
+  const dropped = candidates.filter((c) => !used.has(c.name));
+  if (dropped.length === 0) return { named, kept, lockfile: null };
+  for (const c of dropped) delete manifest.dependencies[c.name];
+  await writeJsonAtomic(paths.packageJson, manifest);
+  const result = await install();
+  return { named, kept, lockfile: result.lockfile };
 }
 
 async function readJson<T>(file: string): Promise<T | undefined> {
@@ -762,6 +821,44 @@ async function run(
       return hash ? path.join(paths.bodies, hash) : undefined;
     };
     const named = await resolveVendorNames(paths.project, unique, inline.inlined, chunkOf);
+    // Bindings still read as a library's whole namespace may be a package Stage 3 left in review
+    // (Lenis inlined next to gsap): install the ones the registry has, try them, keep what fits.
+    const candidates = packagesFile.packages.filter(
+      (p) =>
+        p.status === "review" &&
+        p.version &&
+        p.registry?.exists !== false &&
+        p.registry?.versionPublished !== false,
+    );
+    if (candidates.length > 0 && (await hasUnnamedAliases(unique.map((f) => f.file)))) {
+      const added = await tryReviewPackages(paths, pm, packagesFile, candidates, signal, () =>
+        resolveVendorNames(
+          paths.project,
+          unique,
+          inline.inlined,
+          chunkOf,
+          candidates.map((c) => c.name),
+        ),
+      );
+      named.push(...added.named);
+      lockfile = added.lockfile ?? lockfile;
+      if (added.kept.length > 0) {
+        for (const p of added.kept) {
+          facts.packages.push({
+            name: p.name,
+            version: p.version,
+            confidence: p.confidence,
+            dev: false,
+          });
+          facts.review = facts.review.filter((r) => r.name !== p.name);
+        }
+        facts.packages.sort((a, b) => a.name.localeCompare(b.name));
+        await writeAgentFiles(paths, facts);
+        warn(
+          `Added ${added.kept.map((p) => `${p.name}@${p.version}`).join(", ")} from review: the recovered code reads its exports; see analysis/vendor-names.json.`,
+        );
+      }
+    }
     namedBindings = named.length;
     await writeJsonAtomic(path.join(paths.analysis, "vendor-names.json"), {
       named: named.map((n) => ({ ...n, file: posix(path.relative(paths.root, n.file)) })),

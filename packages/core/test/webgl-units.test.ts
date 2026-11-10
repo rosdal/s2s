@@ -9,6 +9,7 @@ import {
   nameVendorBindings,
   PackageReader,
   shapeOf,
+  throughAliases,
 } from "../src/scaffold/vendor-names.js";
 import { classesReadBeforeDeclared } from "../src/unbundle/adapter.js";
 import { parseCode } from "../src/unbundle/ast.js";
@@ -389,6 +390,121 @@ describe("nameVendorBindings", () => {
     expect(out.named).toMatchObject([{ local: "X", specifier: "liba", export: "LoadingManager" }]);
     expect(out.code).toContain('import { LoadingManager as X } from "liba";');
     expect(out.code).not.toContain("const X = __b");
+  });
+});
+
+describe("nameVendorBindings (#28)", () => {
+  async function libs(defs: Record<string, Record<string, string>>): Promise<string> {
+    const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join, dirname } = await import("node:path");
+    const dir = await mkdtemp(join(tmpdir(), "s2s-names28-"));
+    for (const [name, files] of Object.entries(defs)) {
+      const root = join(dir, "node_modules", name);
+      await mkdir(root, { recursive: true });
+      const exportsMap = Object.fromEntries(
+        Object.keys(files).map((f) => [
+          f === "index.js" ? "." : `./${f.replace(/\.js$/, "")}`,
+          `./${f}`,
+        ]),
+      );
+      await writeFile(
+        join(root, "package.json"),
+        JSON.stringify({ name, type: "module", main: "index.js", exports: exportsMap }),
+      );
+      for (const [file, code] of Object.entries(files)) {
+        await mkdir(dirname(join(root, file)), { recursive: true });
+        await writeFile(join(root, file), code);
+      }
+    }
+    return dir;
+  }
+  const scroller =
+    "{ constructor() { this.wrapper = 1; this.content = 2; this.lerp = 3; this.syncTouch = 4; } raf() {} scrollTo() {} start() {} stop() {} destroy() {} }";
+  const snap =
+    "{ constructor() { this.lenis = 1; this.distanceThreshold = 2; this.debounce = 3; } add() {} remove() {} resize() {} next() {} previous() {} destroy() {} }";
+
+  test("a binding filed under the wrong library is a review candidate's export, entry or subpath", async () => {
+    const dir = await libs({
+      gsap: { "index.js": "export const gsap = { to() {}, set() {} };" },
+      lenis: {
+        "index.js": `export default class Lenis ${scroller}`,
+        "snap.js": `export default class Snap ${snap}`,
+      },
+    });
+    const code = [
+      'import * as __vendor_gsap from "gsap";',
+      "const Xl = __vendor_gsap;",
+      "const Kl = __vendor_gsap;",
+      "export const a = new Xl(), b = new Kl(a);",
+    ].join("\n");
+    const bundle = bundleDeclarations(`var Xl = class ${scroller}; var Kl = class ${snap};`);
+    const reader = (pkg: string) => new PackageReader(dir, pkg);
+    const without = await nameVendorBindings(code, bundle, reader, ["gsap"]);
+    expect(without.code).toContain("const Xl = __vendor_gsap;");
+    const out = await nameVendorBindings(code, bundle, reader, ["gsap"], "", new Set(), ["lenis"]);
+    expect(out.code).toContain('import { default as Xl } from "lenis";');
+    expect(out.code).toContain('import { default as Kl } from "lenis/snap";');
+    expect(out.code).not.toContain("= __vendor_gsap;");
+  });
+
+  test("an instance of a minified library class is copied with the class imported", async () => {
+    const ray =
+      "{ constructor() { this.origin = 1; this.direction = 2; } at() {} intersectPlane() {} intersectBox() {} recast() {} }";
+    const dir = await libs({
+      three: { "index.js": `export class Ray ${ray}\nexport class Plane { normal() {} }` },
+    });
+    const code = [
+      'import * as __vendor_three from "three";',
+      "const Nm = __vendor_three;",
+      "export { Nm };",
+    ].join("\n");
+    const bundleCode = `var Xn = class ${ray}; var Nm = new Xn();`;
+    const out = await nameVendorBindings(
+      code,
+      bundleDeclarations(bundleCode),
+      (pkg) => new PackageReader(dir, pkg),
+      [],
+      bundleCode,
+    );
+    expect(out.code).toMatch(/import { Ray as Xn } from "three";/);
+    expect(out.code).toContain("const Nm = new Xn()");
+    expect(out.code).not.toContain("= __vendor_three;");
+  });
+
+  test("a copy's imports survive the namespace import at the top of the file being rewritten", async () => {
+    const ray =
+      "{ constructor() { this.origin = 1; this.direction = 2; } at() {} intersectPlane() {} intersectBox() {} recast() {} }";
+    const plane =
+      "{ constructor() { this.normal = 1; this.constant = 2; } setFromNormalAndCoplanarPoint() {} distanceToPoint() {} projectPoint() {} coplanarPoint() {} }";
+    const dir = await libs({
+      three: { "index.js": `export class Ray ${ray}\nexport class Plane ${plane}` },
+    });
+    const code = [
+      'import * as __vendor_three from "three";',
+      "const Pl = __vendor_three;",
+      "const Nm = __vendor_three;",
+      "export { Nm, Pl };",
+    ].join("\n");
+    const bundleCode = `var Pl = class ${plane}; var Xn = class ${ray}; var Nm = new Xn();`;
+    const out = await nameVendorBindings(
+      code,
+      bundleDeclarations(bundleCode),
+      (pkg) => new PackageReader(dir, pkg),
+      [],
+      bundleCode,
+    );
+    expect(out.code).toMatch(/import { Plane as Pl } from "three";/);
+    expect(out.code).toMatch(/import { Ray as Xn } from "three";/);
+    expect(out.code).toContain("const Nm = new Xn()");
+  });
+
+  test("an alias another chunk declares is followed where it is declared", () => {
+    const theirs = bundleDeclarations(
+      "var core = { to() {} }; var gsap = core.registerPlugin(css) || core;",
+    );
+    const node = throughAliases(theirs.get("gsap"), theirs);
+    expect(node?.type).toBe("ObjectExpression");
   });
 });
 

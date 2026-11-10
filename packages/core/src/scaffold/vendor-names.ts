@@ -625,20 +625,28 @@ export interface Resolution {
   score: number;
 }
 
-/** Resolve one bundle binding of `pkg`: the package entry first, then its other modules. */
+/**
+ * Resolve one bundle binding of `pkg`: the package entry first, then its other modules. With
+ * `everywhere`, the entry's match doesn't end the search: the closest match in any module wins
+ * (`Snap` is `lenis/snap`'s, not the entry's `Lenis`).
+ */
 export async function resolveBinding(
   reader: PackageReader,
   shape: Shape,
+  everywhere = false,
 ): Promise<Resolution | null> {
   const entry = await reader.entry();
+  let best: Resolution | null = null;
   if (entry) {
     const exports = [...(await reader.exportsOf(entry))].map(([name, s]) => ({ name, shape: s }));
     const hit = bestExport(shape, exports);
-    if (hit) return { specifier: reader.name, ...hit };
+    if (hit && !everywhere) return { specifier: reader.name, ...hit };
+    if (hit) best = { specifier: reader.name, ...hit };
   }
   const hints = [...shape].map((s) => s.slice(2));
-  let best: Resolution | null = null;
   for (const [specifier, file] of await reader.subpaths(hints)) {
+    // The entry, reached by its file path (`lenis/dist/lenis.mjs`), is imported by the package name.
+    if (file === entry) continue;
     const exports = [...(await reader.exportsOf(file))].map(([name, s]) => ({ name, shape: s }));
     const hit = bestExport(shape, exports);
     // On a tie the module that defines it beats a barrel that re-exports it (`Addons.js`).
@@ -676,6 +684,11 @@ export async function nameVendorBindings(
   /** The bundle's text, to copy small helpers no package exports, and names not to copy. */
   bundleCode = "",
   notCopied: Set<string> = new Set(),
+  /**
+   * Packages Stage 3 left in review, installed to be tried last: a binding nothing else names
+   * that one of them exports, closely, is that package's.
+   */
+  candidates: string[] = [],
 ): Promise<{ code: string; named: Omit<NamedBinding, "file">[]; copied: string[] }> {
   let ast: t.File;
   try {
@@ -821,6 +834,13 @@ export async function nameVendorBindings(
         if (hit && hit.score >= CROSS_PACKAGE_SIMILARITY && (!best || hit.score > best.score))
           best = { specifier: other, ...hit };
       }
+    if (!best)
+      for (const other of candidates) {
+        if (own.includes(other) || pkgs.includes(other)) continue;
+        const hit = await resolveBinding(readerOf(other), shape, true);
+        if (hit && hit.score >= CROSS_PACKAGE_SIMILARITY && (!best || hit.score > best.score))
+          best = hit;
+      }
     if (best) resolved.set(local, best);
   };
   for (const [local, { pkg }] of namespaces) await tryName(local, [pkg]);
@@ -914,6 +934,24 @@ export async function nameVendorBindings(
     // A library binding the copy reads under its own name (`nodeObject$1` is three/tsl's
     // `nodeObject`): imported rather than copied.
     const byName = (local: string) => exportedAs(local, pkgs, readerOf);
+    // A minified name the copy reads (`Om = new Xn()`, three's `Ray`): the class or function it
+    // holds, matched by shape against this module's libraries, is imported rather than copied.
+    const byShape = async (local: string): Promise<Resolution | null> => {
+      const decl = deref(bundle.get(local));
+      if (
+        decl?.type !== "ClassDeclaration" &&
+        decl?.type !== "ClassExpression" &&
+        decl?.type !== "FunctionDeclaration" &&
+        decl?.type !== "FunctionExpression"
+      )
+        return null;
+      const shape = shapeOf(decl);
+      for (const pkg of pkgs) {
+        const hit = await resolveBinding(readerOf(pkg), shape);
+        if (hit) return hit;
+      }
+      return null;
+    };
     const closure = async (
       name: string,
       stack: Set<string>,
@@ -942,7 +980,7 @@ export async function nameVendorBindings(
           continue;
         if (imports.has(n) || copyImports.has(n)) continue;
         // The library's own export first: a copy would be a second instance of its internals.
-        const hit = await byName(n);
+        const hit = (await byName(n)) ?? (await byShape(n));
         if (hit) {
           imports.set(n, hit);
           continue;
@@ -1067,12 +1105,10 @@ export async function nameVendorBindings(
       score: r.score,
     });
   }
-  if (bySpecifier.size > 0)
-    edits.push({
-      start: 0,
-      end: 0,
-      text: `${[...bySpecifier].map(([spec, names]) => `import { ${names.join(", ")} } from ${JSON.stringify(spec)};`).join("\n")}\n`,
-    });
+  const copyImportText =
+    bySpecifier.size > 0
+      ? `${[...bySpecifier].map(([spec, names]) => `import { ${names.join(", ")} } from ${JSON.stringify(spec)};`).join("\n")}\n`
+      : "";
   for (const [local, { pkg, node }] of namespaces) {
     const lines: string[] = [];
     const bySpec = new Map<string, string[]>();
@@ -1124,6 +1160,13 @@ export async function nameVendorBindings(
     for (const [spec, names] of bySpec)
       lines.push(`import { ${names.join(", ")} } from ${JSON.stringify(spec)};`);
     edits.push({ start: node.start ?? 0, end: node.end ?? 0, text: lines.join("\n") });
+  }
+  if (copyImportText) {
+    // The top of the file is often the namespace import rewritten above; an insert at 0 would be
+    // dropped behind that wider edit, so the imports join it.
+    const first = edits.find((e) => e.start === 0 && e.end > 0);
+    if (first) first.text = copyImportText + first.text;
+    else edits.push({ start: 0, end: 0, text: copyImportText });
   }
   return {
     code: applyEdits(code, edits),
@@ -1222,6 +1265,26 @@ function freeNames(text: string): string[] | null {
 }
 
 /**
+ * What a declaration holds once its aliases are followed in the bundle that declares it:
+ * `var gsap = core.registerPlugin(css) || core` holds `core`'s value. A chunk that imports the
+ * binding sees only the binding, not `core`, so the chain is followed where it is declared.
+ */
+export function throughAliases(
+  node: t.Node | undefined,
+  decls: Map<string, t.Node>,
+  depth = 0,
+): t.Node | undefined {
+  if (!node || depth > 8) return node;
+  if (node.type === "Identifier") {
+    const next = decls.get(node.name);
+    return next ? throughAliases(next, decls, depth + 1) : node;
+  }
+  if (node.type === "LogicalExpression" && (node.operator === "||" || node.operator === "??"))
+    return throughAliases(node.right, decls, depth + 1);
+  return node;
+}
+
+/**
  * Name the vendor bindings in every recovered module of the project, given the bundle each one
  * came from. Rewrites the files in place and returns what it named.
  */
@@ -1232,6 +1295,8 @@ export async function resolveVendorNames(
   inlined: { name: string; text: string; file?: string }[] = [],
   /** The bundle a chunk import of `bundle` (`./vendor.c4.js`) loads, when it was captured. */
   chunkOf: (bundle: string, spec: string) => string | undefined = () => undefined,
+  /** Review packages installed to be tried last (see `nameVendorBindings`). */
+  candidates: string[] = [],
 ): Promise<NamedBinding[]> {
   const extra = new Map<string, t.Node>();
   // Fragments named by one module's import of another chunk: that module's names alone (the
@@ -1281,7 +1346,9 @@ export async function resolveVendorNames(
   const manifest = await readFile(path.join(projectDir, "package.json"), "utf8")
     .then((x) => JSON.parse(x) as { dependencies?: Record<string, string> })
     .catch(() => ({}) as { dependencies?: Record<string, string> });
-  const projectPkgs = Object.keys(manifest.dependencies ?? {});
+  const projectPkgs = Object.keys(manifest.dependencies ?? {}).filter(
+    (p) => !candidates.includes(p),
+  );
   const out: NamedBinding[] = [];
   for (const { file, bundle } of files) {
     const code = await readFile(file, "utf8").catch(() => undefined);
@@ -1301,7 +1368,7 @@ export async function resolveVendorNames(
           exportsOf.set(other, exported);
         }
         const local = exported.get(i.imported);
-        const decl = local ? theirs.get(local) : undefined;
+        const decl = local ? throughAliases(theirs.get(local), theirs) : undefined;
         if (decl) {
           decls.set(i.local, decl);
           names.add(i.local);
@@ -1331,6 +1398,7 @@ export async function resolveVendorNames(
       projectPkgs,
       texts.get(bundle) ?? "",
       new Set([...extra.keys(), ...mine.map((l) => l.name), ...(borrowed.get(bundle) ?? [])]),
+      candidates,
     );
     if (result.named.length === 0 && result.copied.length === 0) continue;
     await writeFile(file, result.code);

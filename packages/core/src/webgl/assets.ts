@@ -20,7 +20,13 @@ import {
   placeholderPng,
   silentWav,
 } from "./formats.js";
-import { type ModelSummary, readModel, sanitizeNodeName, summarize } from "./gltf.js";
+import {
+  interleavedVertices,
+  type ModelSummary,
+  readModel,
+  sanitizeNodeName,
+  summarize,
+} from "./gltf.js";
 import { type MediaTools, withMedia } from "./media.js";
 import { type ProxyReport, proxyModel } from "./proxy.js";
 import { decodeSnapshot, type SceneSnapshot, type StoredSnapshot } from "./snapshot.js";
@@ -465,7 +471,7 @@ async function buildOne(asset: AssetRecord, body: Buffer, ctx: BuildContext): Pr
       return;
     }
     if (mode === "proxy") {
-      const out = await proxyModel(doc);
+      const out = await proxyModel(doc, { interleaved: interleavedVertices(new Uint8Array(body)) });
       queue(out.bytes, "proxy", false);
       asset.output.proxy = out.report;
       return;

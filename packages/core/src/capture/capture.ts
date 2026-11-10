@@ -444,6 +444,7 @@ export async function capture(options: CaptureOptions): Promise<CaptureResult> {
           viewports: opts.viewports,
           userAgents,
           recorder,
+          replay: { records: () => log.records, store },
           keyframes: keyframePlan,
           keyframesSpec: opts.keyframes,
           maxKeyframes: opts.maxKeyframes,

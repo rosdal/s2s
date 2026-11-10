@@ -33,7 +33,11 @@ export class ReplayIndex {
   readonly #failed = new Set<string>();
   readonly #firstPartyOrigins = new Set<string>();
 
-  constructor(records: RequestRecord[], targetUrl: string) {
+  /**
+   * With `site`, the site's own documents and scripts are replayed too: for replaying the original
+   * site from its capture, not for checking a rebuild.
+   */
+  constructor(records: RequestRecord[], targetUrl: string, options: { site?: boolean } = {}) {
     this.#firstPartyOrigins.add(new URL(targetUrl).origin);
     for (const r of records) {
       if (r.origin === "first-party") {
@@ -59,8 +63,8 @@ export class ReplayIndex {
       }
       if (r.method !== "GET" || !r.bodyHash || r.status < 200 || r.status >= 300) continue;
       if (r.origin === "analytics-ads") continue;
-      if (r.resourceType === "document") continue;
-      if (r.origin === "first-party" && isScript(r)) continue;
+      if (!options.site && r.resourceType === "document") continue;
+      if (!options.site && r.origin === "first-party" && isScript(r)) continue;
       const entry: ReplayEntry = {
         status: r.status,
         headers: Object.fromEntries(

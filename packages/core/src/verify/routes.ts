@@ -15,13 +15,14 @@ function safeDecode(pathname: string): string | undefined {
 
 /**
  * Serve the rebuilt site's own files from `origin`, replay captured responses for everything else
- * it asks for, and block the rest. Bodies in `withheld` are never replayed.
+ * it asks for, and block the rest. Bodies in `withheld` are never replayed. With `dist` null,
+ * nothing is served from disk and every request is replayed or blocked.
  */
 export async function installReplay(
   page: Page,
   ctx: {
     origin: string;
-    dist: string;
+    dist: string | null;
     replay: ReplayIndex;
     store: BodyStore;
     blocked: Set<string>;
@@ -45,7 +46,7 @@ export async function installReplay(
     const url = route.request().url();
     if (!/^https?:/.test(url)) return route.continue();
     const parsed = new URL(url);
-    if (parsed.origin === origin) {
+    if (parsed.origin === origin && dist !== null) {
       const file = path.join(dist, safeDecode(parsed.pathname) ?? "\0");
       const exists =
         file.startsWith(dist) &&

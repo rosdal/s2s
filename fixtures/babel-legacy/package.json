@@ -6,9 +6,9 @@
     "build": "node build.js"
   },
   "devDependencies": {
-    "@babel/core": "7.29.7",
-    "@babel/preset-env": "7.29.7",
-    "babel-loader": "8.4.1",
+    "@babel/core": "8.1.2",
+    "@babel/preset-env": "8.0.7",
+    "babel-loader": "10.1.1",
     "webpack": "4.47.0"
   }
 }

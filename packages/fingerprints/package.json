@@ -21,8 +21,8 @@
   "dependencies": {
     "@rosdal/s2s-core": "workspace:*",
     "esbuild": "^0.28.2",
-    "oxc-minify": "^0.157.0",
-    "oxc-parser": "^0.157.0",
+    "oxc-minify": "^0.159.0",
+    "oxc-parser": "^0.159.0",
     "terser": "^5.51.2",
     "xxhash-wasm": "^1.1.0"
   }

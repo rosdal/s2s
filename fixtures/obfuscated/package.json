@@ -6,6 +6,6 @@
     "build": "node build.js"
   },
   "devDependencies": {
-    "javascript-obfuscator": "5.9.1"
+    "javascript-obfuscator": "5.10.1"
   }
 }
